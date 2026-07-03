@@ -17,6 +17,12 @@ def tw(t):
         t = "@" + t
     return f" ({t})"
 
+def format_player(team, name, twitter):
+    team = (team or "").strip()
+    name = (name or "").strip()
+    separator = "|" if team else ""
+    return f"{team}{separator}{name}{tw(twitter)}"
+
 class App(QWidget):
     def __init__(self):
         super().__init__()
@@ -52,8 +58,8 @@ class App(QWidget):
             j = json.load(f)
 
         stage = j.get("stage", "")
-        p1 = f'{j.get("pTeam1","")}|{j.get("pName1","")}{tw(j.get("pTwitter1",""))}'
-        p2 = f'{j.get("pTeam2","")}|{j.get("pName2","")}{tw(j.get("pTwitter2",""))}'
+        p1 = format_player(j.get("pTeam1", ""), j.get("pName1", ""), j.get("pTwitter1", ""))
+        p2 = format_player(j.get("pTeam2", ""), j.get("pName2", ""), j.get("pTwitter2", ""))
         stream_url = j.get("streamUrl", "").strip()
 
         lines = []
