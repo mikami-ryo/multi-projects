@@ -1,0 +1,255 @@
+@font-face {
+    font-family: 'OpenSans-BoldItalic';
+    src: url('../score_board/fonts/OpenSans-BoldItalic.ttf') format('truetype');
+    font-weight: bold;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'OpenSans-Bold';
+    src: url('../score_board/fonts/OpenSans-Bold.ttf') format('truetype');
+    font-weight: bold;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Futehodo-MaruGothic';
+    src: url('../score_board/fonts/Futehodo-MaruGothic.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'nicomoji-plus_v2-5';
+    src: url('../score_board/fonts/nicomoji-plus_v2-5.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    margin:0px;
+    background-color: rgba(255, 255, 255, 0);
+    background-repeat: no-repeat;
+    font-family: 'Gadugi','Mona';
+    font-weight: bold;
+    font-size: 14 px;
+    color:#050505;
+    overflow: hidden;
+    width:1280px;
+    height:48px;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+#container {
+    width:1280px;
+    height:48px;
+    position: absolute;
+    top:0;
+    left:0;
+}
+
+#board1 {
+    position:absolute;
+    z-index: 4;
+    top:-50px;
+    left:0px;
+    width:1280px;
+    height:48px;
+    background-image:url('../score_board/imgs/aya_scoreboard_0_.png');
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+
+#board2 {
+    position:absolute;
+    z-index: 1;
+    top:-50px;
+    left:0px;
+    width:1280px;
+    height:720px;
+    background-repeat: no-repeat;
+}
+
+#board3 {
+    position:absolute;
+    z-index: 3;
+    top:0px;
+    left:0px;
+    width:1280px;
+    height:48px;
+    background-image:url('../score_board/imgs/aya_scoreboard_1__.png');
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+
+#board4 {
+    position:absolute;
+    z-index: 3;
+    top:0px;
+    left:0px;
+    width:1280px;
+    height:48px;
+    background-image:url('../score_board/imgs/aya_scoreboard_2__.png');
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+
+#board5 {
+    position:absolute;
+    z-index: 3;
+    top:-50px;
+    left:0px;
+    width:170px;
+    height:48px;
+    background-image:url('../score_board/imgs/aya_scoreboard_3_.png');
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+
+#flags {
+    position: absolute;
+    z-index: 3;
+    left: 197px;
+    top: 0px;
+    width: 886;
+    height: 31px;
+}
+
+#flag1 {
+    position: absolute;
+    z-index: 5;
+    width: 87px;
+    height: 31px;
+    top:0px;
+    left:0px;
+}
+
+#flag2 {
+    z-index: 5;
+    position: absolute;
+    width: 87px;
+    height: 32px;
+    top:0px;
+    right:0;
+}
+
+#score1 {
+    position: absolute;
+    z-index: 5;
+    width: 60px;
+    height: 60px;
+    left: 501px;
+    top: -18px;
+    text-align: center;
+    font-size: 25px;
+    color: #fff;
+}
+
+#score1 img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+#score2 {
+    position: absolute;
+    z-index: 5;
+    width: 60px;
+    height: 60px;
+    right: 539px;
+    top: -18px;
+    text-align: center;
+    font-size: 25px;
+    color: #fff;
+}
+
+#score2 img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+#player1 {
+    position: absolute;
+    z-index: 5;
+    height: 30px;
+    top: 13px;
+    font-family: 'nicomoji-plus_v2-5', sans-serif;
+    font-size: 18px;
+    color: #fff;
+    text-align: center;
+}
+
+#player2 {
+    position: absolute;
+    z-index: 5;
+    height: 30px;
+    top: 13px;
+    font-family: 'nicomoji-plus_v2-5', sans-serif;
+    font-size: 18px;
+    color: #fff;
+    text-align: center;
+}
+
+#team1 {
+    position: absolute;
+    z-index: 5;
+    height: 30px;
+    top: 14px;
+    font-family: 'OpenSans-Bold', sans-serif;
+    font-size: 14px;
+    color: #b3cdff;
+    text-align: center;
+}
+
+#team2 {
+    position: absolute;
+    z-index: 5;
+    height: 30px;
+    top: 14px;
+    font-family: 'OpenSans-Bold', sans-serif;
+    font-size: 14px;
+    color: #ffb3d1;
+    text-align: center;
+}
+
+#scoreboardintro {
+    position: absolute;
+    top:0px;
+    left:0px;
+    width:1280px;
+    height:48px;
+}
+
+#stage {
+    position: absolute;
+    z-index: 5;
+    width: 100px;
+    height: 30px;
+    top: 5px;
+    left: 55px;
+    font-family: 'OpenSans-BoldItalic', sans-serif;
+    font-size: 14px;
+    font-weight: normal;
+    text-align: left;
+    text-transform: uppercase;
+    color: #fff;
+}
+
+.hidden {
+    display: none;
+}
