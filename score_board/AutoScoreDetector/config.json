@@ -1,0 +1,9 @@
+{
+  "left_rank_roi": [0.33, 0.0, 0.16, 0.23],
+  "right_rank_roi": [0.67, 0.0, 0.16, 0.23],
+  "gold_hsv_lower": [15, 70, 110],
+  "gold_hsv_upper": [45, 255, 255],
+  "min_gold_ratio": 0.01,
+  "min_blob_ratio": 0.008,
+  "winner_margin": 1.35
+}

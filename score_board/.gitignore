@@ -6,3 +6,7 @@ StreamControl/players\.csv
 streamcontrol\.json
 
 \.DS_Store
+AutoScoreDetector/__pycache__/
+AutoScoreDetector/.venv/
+AutoScoreDetector/debug/
+AutoScoreDetector/state.json
