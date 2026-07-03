@@ -1,4 +1,5 @@
 import argparse
+import base64
 import json
 import time
 from dataclasses import dataclass
@@ -20,9 +21,41 @@ class DetectionMetrics:
     score: float
 
 
+@dataclass
+class DetectionResult:
+    winner: str
+    left_metrics: DetectionMetrics
+    right_metrics: DetectionMetrics
+    left_bounds: tuple[int, int, int, int]
+    right_bounds: tuple[int, int, int, int]
+
+
 def load_config(path: Path) -> dict:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def read_image_file(path: Path) -> np.ndarray:
+    file_bytes = np.fromfile(str(path), dtype=np.uint8)
+    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"Could not read image: {path}")
+    return image
+
+
+def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("Could not decode image bytes.")
+    return image
+
+
+def decode_data_url(data_url: str) -> np.ndarray:
+    encoded = data_url
+    if "," in data_url:
+        _, encoded = data_url.split(",", 1)
+    return decode_image_bytes(base64.b64decode(encoded))
 
 
 def crop_normalized(image, roi):
@@ -73,6 +106,19 @@ def decide_winner(left_metrics: DetectionMetrics, right_metrics: DetectionMetric
     if right_valid and right_metrics.score >= left_metrics.score * winner_margin:
         return "right"
     return "unknown"
+
+
+def detect_winner_from_image(image: np.ndarray, config: dict) -> DetectionResult:
+    left_metrics, _, left_bounds = analyze_gold_presence(image, config["left_rank_roi"], config)
+    right_metrics, _, right_bounds = analyze_gold_presence(image, config["right_rank_roi"], config)
+    winner = decide_winner(left_metrics, right_metrics, config)
+    return DetectionResult(
+        winner=winner,
+        left_metrics=left_metrics,
+        right_metrics=right_metrics,
+        left_bounds=left_bounds,
+        right_bounds=right_bounds,
+    )
 
 
 def render_debug_image(image, left_bounds, right_bounds, left_metrics, right_metrics, winner: str) -> np.ndarray:
@@ -181,30 +227,43 @@ def main():
     if not config_path.exists():
         raise SystemExit(f"Config not found: {config_path}")
 
-    image = cv2.imread(str(image_path))
-    if image is None:
-        raise SystemExit(f"Could not read image: {image_path}")
-
     config = load_config(config_path)
-    left_metrics, _, left_bounds = analyze_gold_presence(image, config["left_rank_roi"], config)
-    right_metrics, _, right_bounds = analyze_gold_presence(image, config["right_rank_roi"], config)
-    winner = decide_winner(left_metrics, right_metrics, config)
+    try:
+        image = read_image_file(image_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    result = detect_winner_from_image(image, config)
 
-    print(f"winner={winner}")
-    print(f"left_score={left_metrics.score:.6f} left_gold_ratio={left_metrics.gold_ratio:.6f} left_blob_ratio={left_metrics.blob_ratio:.6f}")
-    print(f"right_score={right_metrics.score:.6f} right_gold_ratio={right_metrics.gold_ratio:.6f} right_blob_ratio={right_metrics.blob_ratio:.6f}")
+    print(f"winner={result.winner}")
+    print(
+        f"left_score={result.left_metrics.score:.6f} "
+        f"left_gold_ratio={result.left_metrics.gold_ratio:.6f} "
+        f"left_blob_ratio={result.left_metrics.blob_ratio:.6f}"
+    )
+    print(
+        f"right_score={result.right_metrics.score:.6f} "
+        f"right_gold_ratio={result.right_metrics.gold_ratio:.6f} "
+        f"right_blob_ratio={result.right_metrics.blob_ratio:.6f}"
+    )
 
     if args.debug_output:
         debug_path = Path(args.debug_output)
         debug_path.parent.mkdir(parents=True, exist_ok=True)
-        debug_image = render_debug_image(image, left_bounds, right_bounds, left_metrics, right_metrics, winner)
+        debug_image = render_debug_image(
+            image,
+            result.left_bounds,
+            result.right_bounds,
+            result.left_metrics,
+            result.right_metrics,
+            result.winner,
+        )
         cv2.imwrite(str(debug_path), debug_image)
         print(f"debug_output={debug_path}")
 
     if args.write:
-        if winner == "unknown":
+        if result.winner == "unknown":
             raise SystemExit("Detection was unknown; refusing to update streamcontrol.json.")
-        key, value = increment_score(streamcontrol_path, winner)
+        key, value = increment_score(streamcontrol_path, result.winner)
         print(f"updated={key}:{value}")
 
 
