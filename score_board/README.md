@@ -12,8 +12,10 @@ All rights reserved.
 
 ## AutoScoreDetector
 
-`AutoScoreDetector/` contains an experimental result-screen detector for Smash Ultimate.
+`AutoScoreDetector/` には、スマブラSP配信向けの自動スコア反映ツールが入っています。
 
-- The current prototype analyzes a still image and decides whether the winner is on the left (P1) or right (P2).
-- It can optionally increment `streamcontrol.json` by one win for the detected side.
-- Manual score adjustment in StreamControl remains available; this tool only updates the same JSON file when explicitly asked to.
+- `GAME SET` と `results` 画面を検出し、勝者が左側か右側かを判定します。
+- `streamcontrol.json` の `pScore1` / `pScore2` を自動で +1 できます。
+- 既存の StreamControl による手動スコア操作もそのまま使えます。
+
+使い方は [AutoScoreDetector/README.md](C:/Users/ryo03/Documents/Codex/2026-07-01/new-chat/work/multi-projects/score_board/AutoScoreDetector/README.md) に日本語でまとめています。

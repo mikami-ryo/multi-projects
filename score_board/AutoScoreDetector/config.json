@@ -1,9 +1,41 @@
 {
-  "left_rank_roi": [0.33, 0.0, 0.16, 0.23],
-  "right_rank_roi": [0.67, 0.0, 0.16, 0.23],
+  "left_rank_roi": [0.375, 0.01, 0.09, 0.18],
+  "right_rank_roi": [0.705, 0.01, 0.09, 0.18],
   "gold_hsv_lower": [15, 70, 110],
   "gold_hsv_upper": [45, 255, 255],
   "min_gold_ratio": 0.01,
   "min_blob_ratio": 0.008,
-  "winner_margin": 1.35
+  "winner_margin": 1.35,
+  "game_set_text_roi": [0.18, 0.12, 0.62, 0.42],
+  "game_set_text_reference_size": [600, 220],
+  "game_set_text_template_paths": [
+    "templates/game_set_text_mask_clean.png",
+    "templates/game_set_text_mask_small.png",
+    "templates/game_set_text_mask_variant.png"
+  ],
+  "game_set_text_hsv_ranges": [
+    [[18, 60, 120], [42, 255, 255]],
+    [[43, 35, 90], [95, 255, 255]]
+  ],
+  "game_set_text_kernel_size": 3,
+  "game_set_text_min_ratio": 0.18,
+  "game_set_text_min_iou": 0.35,
+  "game_set_text_min_score": 0.45,
+  "results_left_digit_roi": [0.34, 0.01, 0.10, 0.16],
+  "results_right_digit_roi": [0.69, 0.01, 0.10, 0.16],
+  "results_white_hsv_ranges": [
+    [[0, 0, 170], [179, 60, 255]]
+  ],
+  "results_dark_value_threshold": 90,
+  "results_left_winner_gold_min_ratio": 0.20,
+  "results_left_winner_left_dark_min_ratio": 0.47,
+  "results_left_winner_right_dark_min_ratio": 0.39,
+  "results_left_winner_right_white_min_ratio": 0.00,
+  "results_left_winner_right_gold_max_ratio": 0.01,
+  "results_right_winner_right_gold_min_ratio": 0.06,
+  "results_right_winner_left_dark_min_ratio": 0.42,
+  "results_right_winner_right_dark_min_ratio": 0.47,
+  "results_right_winner_left_white_min_ratio": 0.00,
+  "results_right_winner_left_gold_max_ratio": 0.03,
+  "scene_kernel_size": 5
 }

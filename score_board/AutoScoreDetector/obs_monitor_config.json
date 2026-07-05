@@ -11,13 +11,21 @@
     "timeout_seconds": 3.0
   },
   "monitor": {
-    "poll_interval_ms": 500,
+    "poll_interval_ms": 250,
+    "consecutive_game_set_frames": 2,
+    "consecutive_results_frames": 2,
     "consecutive_winner_frames": 2,
-    "clear_unknown_frames": 4,
+    "results_timeout_frames": 240,
+    "clear_match_frames": 8,
     "debug_output_path": "debug/latest_obs_debug.jpg",
     "state_output_path": "state.json",
-    "save_debug_image": true,
-    "write_scores": true
+    "verbose_frame_logs": false,
+    "verbose_event_logs": false,
+    "save_debug_image": false,
+    "debug_image_interval_frames": 4,
+    "save_state_json": false,
+    "state_save_interval_frames": 8,
+    "write_scores": false
   },
   "paths": {
     "detector_config_path": "config.json",
