@@ -7,14 +7,24 @@ import cv2
 import obsws_python as obs
 from obsws_python.error import OBSSDKError, OBSSDKRequestError
 
-from detect_result import (
-    DetectionResult,
-    decode_data_url,
-    detect_winner_from_image,
-    increment_score,
-    load_config,
-    render_debug_image,
-)
+try:
+    from .detect_result import (
+        DetectionResult,
+        decode_data_url,
+        detect_winner_from_image,
+        increment_score,
+        load_config,
+        render_debug_image,
+    )
+except ImportError:  # Keep direct script execution compatible.
+    from detect_result import (
+        DetectionResult,
+        decode_data_url,
+        detect_winner_from_image,
+        increment_score,
+        load_config,
+        render_debug_image,
+    )
 
 
 @dataclass

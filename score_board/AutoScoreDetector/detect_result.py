@@ -1,6 +1,8 @@
 import argparse
 import base64
 import json
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -474,9 +476,19 @@ def read_streamcontrol(path: Path) -> dict:
 
 
 def write_streamcontrol(path: Path, payload: dict) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=4)
-        handle.write("\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(prefix="streamcontrol-", suffix=".json", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=4)
+            handle.write("\n")
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
 
 
 def next_trigger_value(payload: dict) -> str:
