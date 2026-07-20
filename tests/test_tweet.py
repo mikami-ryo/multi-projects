@@ -23,7 +23,7 @@ class TweetTests(unittest.TestCase):
         )
 
     def test_intent_keeps_line_breaks_encoded(self):
-        url = x_intent_url("🍀LSF🍀\nLevi vs MiiBrawlerGOD\n(https://example.com)")
+        url = x_intent_url("🍀LSF🍀\nPlayerOne vs PlayerTwo\n(https://example.com)")
         self.assertEqual(url.count("%0A"), 2)
 
 

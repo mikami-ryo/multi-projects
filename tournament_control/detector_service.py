@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from .events import AppEvent
+from .streamcontrol import ScoreLimitError
 
 
 @dataclass
@@ -20,6 +21,9 @@ class MonitorState:
     clear_count: int = 0
     frames_since_game_set: int = 0
     frame_index: int = 0
+    vs_count: int = 0
+    vs_clear_count: int = 0
+    vs_latched: bool = False
 
 
 def _reset(state: MonitorState) -> None:
@@ -141,6 +145,26 @@ class DetectorService:
             self._emit("detector.stopped")
 
     def _process(self, state, result, monitor: dict, store) -> str | None:
+        # A bright KO effect can resemble the white VS letters. Once GAME SET
+        # has been confirmed, VS detection must stay disabled until the result
+        # flow has completed and the monitor has returned to in_match.
+        if state.phase == "in_match" and result.is_vs:
+            state.vs_count += 1
+            state.vs_clear_count = 0
+            if (
+                state.vs_count >= int(monitor.get("consecutive_vs_frames", 2))
+                and not state.vs_latched
+            ):
+                state.vs_latched = True
+                state.game_set_count = 0
+                self._emit("screen.vs")
+                return "VS画面を検出しました。試合中表示へ切り替えます。"
+        else:
+            state.vs_count = 0
+            state.vs_clear_count += 1
+            if state.vs_clear_count >= 2:
+                state.vs_latched = False
+
         if state.phase == "in_match":
             if result.is_game_set:
                 state.game_set_count += 1
@@ -185,7 +209,10 @@ class DetectorService:
                         score_written=self.write_scores,
                     )
                     if self.write_scores:
-                        store.increment_score(1 if winner == "left" else 2)
+                        try:
+                            store.increment_score(1 if winner == "left" else 2)
+                        except ScoreLimitError as exc:
+                            return f"スコアを更新しませんでした: {exc}"
                         self.on_score()
                         return f"勝者を検出し、P{1 if winner == 'left' else 2}のスコアを加算しました。"
                     return f"勝者を検出しました: {winner}（書き込みは無効）"

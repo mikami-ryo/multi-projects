@@ -21,6 +21,13 @@
   "game_set_text_min_ratio": 0.18,
   "game_set_text_min_iou": 0.35,
   "game_set_text_min_score": 0.45,
+  "vs_text_roi": [0.45, 0.42, 0.12, 0.20],
+  "vs_text_hsv_ranges": [
+    [[0, 0, 190], [179, 75, 255]]
+  ],
+  "vs_text_kernel_size": 3,
+  "vs_text_min_ratio": 0.48,
+  "vs_text_min_blob_ratio": 0.47,
   "results_left_digit_roi": [0.34, 0.01, 0.10, 0.16],
   "results_right_digit_roi": [0.69, 0.01, 0.10, 0.16],
   "results_white_hsv_ranges": [

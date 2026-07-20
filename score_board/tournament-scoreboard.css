@@ -1,0 +1,107 @@
+@font-face {
+  font-family: "AyaTemporary";
+  src: url("fonts/OpenSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+
+html, body {
+  width: 1280px;
+  height: 720px;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#scoreboard-root {
+  position: relative;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+  font-family: "AyaTemporary", "Yu Gothic", sans-serif;
+}
+
+#legacy-scoreboard {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  background: transparent;
+}
+
+#aya-scoreboard {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: none;
+}
+
+.full-layer {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  object-fit: contain;
+  pointer-events: none;
+  display: none;
+}
+
+#aya-framework { z-index: 1; }
+#aya-score-left, #aya-score-right { z-index: 2; }
+#aya-best-of { z-index: 3; }
+
+.aya-text {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: center;
+  color: white;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+#aya-stage {
+  left: 10px;
+  top: 8px;
+  width: 170px;
+  height: 30px;
+  font-size: 20px;
+  line-height: 30px;
+}
+
+.player-name {
+  top: 17px;
+  width: 285px;
+  height: 31px;
+  font-size: 24px;
+  line-height: 31px;
+}
+
+#aya-player-left { left: 235px; }
+#aya-player-right { left: 760px; }
+
+.prefix {
+  top: 56px;
+  width: 82px;
+  height: 24px;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+#aya-prefix-left { left: 444px; }
+#aya-prefix-right { left: 746px; }
+
+.rep {
+  top: 63px;
+  width: 140px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
+}
+
+#aya-rep-left { left: 292px; }
+#aya-rep-right { left: 892px; }

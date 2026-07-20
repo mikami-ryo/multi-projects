@@ -63,9 +63,22 @@ class AppSettings:
     phase_bo5_rules: dict[str, dict[str, str]] = field(default_factory=dict)
     phase_round_options: dict[str, dict] = field(default_factory=dict)
     scoreboard_port: int = 8765
+    scoreboard_design: str = "legacy"
+    player_camera_enabled: bool = False
     stream_url: str = ""
     obs_host: str = "localhost"
     obs_port: int = 4455
     obs_password: str = ""
     obs_source_name: str = "ゲーム画面"
     detector_write_scores: bool = False
+    obs_layout_enabled: bool = False
+    obs_layout_scene_name: str = ""
+    obs_game_source_name: str = "ゲーム画面"
+    obs_player1_source_name: str = ""
+    obs_player2_source_name: str = ""
+    obs_in_game_layout: dict[str, dict] = field(default_factory=dict)
+    obs_between_game_layout: dict[str, dict] = field(default_factory=dict)
+    transition_in_game_framework_delay: float = 0.0
+    transition_in_game_layout_delay: float = 0.0
+    transition_between_game_framework_delay: float = 0.0
+    transition_between_game_layout_delay: float = 0.0

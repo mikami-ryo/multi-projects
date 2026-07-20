@@ -18,4 +18,4 @@ All rights reserved.
 - `streamcontrol.json` の `pScore1` / `pScore2` を自動で +1 できます。
 - 既存の StreamControl による手動スコア操作もそのまま使えます。
 
-使い方は [AutoScoreDetector/README.md](C:/Users/ryo03/Documents/Codex/2026-07-01/new-chat/work/multi-projects/score_board/AutoScoreDetector/README.md) に日本語でまとめています。
+使い方は [AutoScoreDetector/README.md](AutoScoreDetector/README.md) に日本語でまとめています。
