@@ -45,6 +45,10 @@ class DetectionResult:
     def is_results_screen(self) -> bool:
         return self.scene_flags.get("results_screen", False)
 
+    @property
+    def is_vs(self) -> bool:
+        return self.scene_flags.get("vs", False)
+
 
 def load_config(path: Path) -> dict:
     with path.open(encoding="utf-8") as handle:
@@ -280,6 +284,27 @@ def detect_scene_flags(image: np.ndarray, config: dict) -> tuple[dict[str, bool]
     scene_bounds["game_set_search"] = best_game_set_search_bounds
     scene_bounds["game_set_match"] = best_game_set_match_bounds
 
+    vs_ratio, vs_mask, vs_bounds = analyze_color_ratio(
+        image,
+        config.get("vs_text_roi", [0.45, 0.42, 0.12, 0.20]),
+        config.get("vs_text_hsv_ranges", [[[0, 0, 190], [179, 75, 255]]]),
+        int(config.get("vs_text_kernel_size", 3)),
+    )
+    vs_pixels = float(vs_mask.shape[0] * vs_mask.shape[1])
+    vs_contours, _ = cv2.findContours(vs_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    vs_blob_ratio = (
+        max((cv2.contourArea(contour) for contour in vs_contours), default=0.0) / vs_pixels
+        if vs_pixels
+        else 0.0
+    )
+    vs_detected = (
+        vs_ratio >= float(config.get("vs_text_min_ratio", 0.45))
+        and vs_blob_ratio >= float(config.get("vs_text_min_blob_ratio", 0.35))
+    )
+    scene_metrics["vs_text_ratio"] = vs_ratio
+    scene_metrics["vs_text_blob_ratio"] = vs_blob_ratio
+    scene_bounds["vs_text"] = vs_bounds
+
     results_kernel_size = int(config.get("scene_kernel_size", 3))
     dark_value_threshold = int(config.get("results_dark_value_threshold", 90))
     left_gold_ratio, _, left_digit_bounds = analyze_color_ratio(
@@ -369,6 +394,7 @@ def detect_scene_flags(image: np.ndarray, config: dict) -> tuple[dict[str, bool]
     scene_flags = {
         "game_set": game_set,
         "results_screen": results_screen,
+        "vs": vs_detected,
     }
     return scene_flags, scene_metrics, scene_bounds
 

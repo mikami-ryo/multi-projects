@@ -24,6 +24,26 @@ def app_data_dir() -> Path:
     return path
 
 
+MANAGED_SCOREBOARD_FILES = (
+    "tournament-scoreboard.html",
+    "tournament-scoreboard.css",
+    "tournament-scoreboard.js",
+)
+
+
+def sync_managed_scoreboard_files(source: Path, target: Path) -> None:
+    """Update app-owned files while leaving the editable legacy theme untouched."""
+    for relative in MANAGED_SCOREBOARD_FILES:
+        source_file = source / relative
+        if source_file.exists():
+            target_file = target / relative
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, target_file)
+    source_themes = source / "themes"
+    if source_themes.exists():
+        shutil.copytree(source_themes, target / "themes", dirs_exist_ok=True)
+
+
 @dataclass(frozen=True)
 class AppPaths:
     data_dir: Path
@@ -65,6 +85,8 @@ class AppPaths:
                 ".gitignore",
             )
             shutil.copytree(source_scoreboard, scoreboard_workspace, ignore=ignored)
+        elif source_scoreboard.exists():
+            sync_managed_scoreboard_files(source_scoreboard, scoreboard_workspace)
 
         automation_rules_file = data / "automation_rules.json"
         if not automation_rules_file.exists():
@@ -75,8 +97,10 @@ class AppPaths:
         scoreboard_state_file = data / "scoreboard_state.json"
         if not scoreboard_state_file.exists():
             scoreboard_state_file.write_text(
-                '{\n  "version": 1,\n  "activeTheme": "default",\n'
-                '  "mode": "automatic",\n  "lastEvent": null\n}\n',
+                '{\n  "version": 2,\n  "activeTheme": "legacy",\n'
+                '  "design": "legacy",\n  "playerCamera": false,\n'
+                '  "scene": "in_game",\n  "mode": "automatic",\n'
+                '  "lastEvent": null\n}\n',
                 encoding="utf-8",
             )
 

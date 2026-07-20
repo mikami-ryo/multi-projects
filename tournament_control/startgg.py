@@ -12,6 +12,7 @@ from .models import Match, Player
 
 API_ENDPOINT = "https://api.start.gg/gql/alpha"
 EVENT_URL_PATTERN = re.compile(r"/tournament/([^/?#]+)/event/([^/?#]+)", re.IGNORECASE)
+PHASE_GROUP_URL_PATTERN = re.compile(r"/brackets/\d+/(\d+)", re.IGNORECASE)
 
 
 EVENT_PHASES_QUERY = """
@@ -38,6 +39,7 @@ query TournamentControlPhaseSets($phaseId: ID!, $page: Int!, $perPage: Int!) {
         state
         fullRoundText
         totalGames
+        phaseGroup { id bracketType }
         slots {
           entrant {
             id
@@ -69,6 +71,7 @@ query TournamentControlEventSets($eventSlug: String!, $page: Int!, $perPage: Int
         state
         fullRoundText
         totalGames
+        phaseGroup { id bracketType }
         slots {
           entrant {
             id
@@ -96,6 +99,7 @@ class EventMatches:
     event_id: str
     event_name: str
     matches: list[Match]
+    bracket_type: str = ""
 
 
 def event_slug_from_url(url: str) -> str | None:
@@ -103,6 +107,11 @@ def event_slug_from_url(url: str) -> str | None:
     if not match:
         return None
     return f"tournament/{match.group(1)}/event/{match.group(2)}"
+
+
+def phase_group_id_from_url(url: str) -> str | None:
+    match = PHASE_GROUP_URL_PATTERN.search(url or "")
+    return match.group(1) if match else None
 
 
 def _twitter_from_accounts(accounts: Any) -> str:
@@ -146,8 +155,17 @@ def parse_event_matches(data: dict) -> EventMatches:
     if not event:
         raise StartGGError("イベントが見つかりません。URLとAPIトークンを確認してください。")
     connection = event.get("sets") or {}
+    nodes = connection.get("nodes") or []
+    bracket_type = next(
+        (
+            str((node.get("phaseGroup") or {}).get("bracketType") or "")
+            for node in nodes
+            if (node.get("phaseGroup") or {}).get("bracketType")
+        ),
+        "",
+    )
     matches = []
-    for node in connection.get("nodes") or []:
+    for node in nodes:
         players = []
         for slot in node.get("slots") or []:
             players.append(_player_from_entrant(slot.get("entrant")))
@@ -163,7 +181,12 @@ def parse_event_matches(data: dict) -> EventMatches:
                 phase_name=str(node.get("_phaseName") or ""),
             )
         )
-    return EventMatches(str(event.get("id") or ""), str(event.get("name") or ""), matches)
+    return EventMatches(
+        str(event.get("id") or ""),
+        str(event.get("name") or ""),
+        matches,
+        bracket_type,
+    )
 
 
 class StartGGClient:
@@ -194,7 +217,11 @@ class StartGGClient:
             raise StartGGError(messages)
         return payload.get("data") or {}
 
-    def event_matches(self, event_slug: str) -> EventMatches:
+    def event_matches(
+        self,
+        event_slug: str,
+        phase_group_id: str | None = None,
+    ) -> EventMatches:
         metadata = self.execute(EVENT_PHASES_QUERY, {"eventSlug": event_slug})
         event_metadata = metadata.get("event") or {}
         if not event_metadata:
@@ -218,6 +245,11 @@ class StartGGClient:
                     page_info = connection.get("pageInfo") or {}
                     total_pages = int(page_info.get("totalPages") or 1)
                     for original in connection.get("nodes") or []:
+                        node_group_id = str(
+                            (original.get("phaseGroup") or {}).get("id") or ""
+                        )
+                        if phase_group_id and node_group_id != str(phase_group_id):
+                            continue
                         node = dict(original)
                         node["_phaseId"] = phase_id
                         node["_phaseName"] = phase_name or str(phase.get("name") or "")
@@ -249,6 +281,14 @@ class StartGGClient:
             next_event = next_data.get("event") or {}
             next_connection = next_event.get("sets") or {}
             all_nodes.extend(next_connection.get("nodes") or [])
+
+        if phase_group_id:
+            all_nodes = [
+                node
+                for node in all_nodes
+                if str((node.get("phaseGroup") or {}).get("id") or "")
+                == str(phase_group_id)
+            ]
 
         connection["nodes"] = all_nodes
         event["sets"] = connection

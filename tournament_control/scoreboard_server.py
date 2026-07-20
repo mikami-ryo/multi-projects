@@ -43,6 +43,12 @@ class ScoreboardServer:
 
             def do_GET(self):
                 request_path = self.path.split("?", 1)[0]
+                if request_path in {"/", "/scoreboard.html"}:
+                    self.path = "/tournament-scoreboard.html"
+                    return super().do_GET()
+                if request_path == "/legacy-scoreboard.html":
+                    self.path = "/scoreboard.html"
+                    return super().do_GET()
                 if request_path == "/streamcontrol.json":
                     body = json.dumps(store.read(), ensure_ascii=False, indent=2).encode("utf-8")
                     self.send_response(HTTPStatus.OK)

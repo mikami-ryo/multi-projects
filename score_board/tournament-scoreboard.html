@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1280,height=720,initial-scale=1">
+  <link rel="stylesheet" href="tournament-scoreboard.css">
+  <script defer src="tournament-scoreboard.js"></script>
+</head>
+<body>
+  <main id="scoreboard-root">
+    <iframe id="legacy-scoreboard" src="legacy-scoreboard.html" title="旧スコアボード"></iframe>
+    <section id="aya-scoreboard" aria-label="新スコアボード">
+      <img id="aya-framework" class="full-layer" alt="">
+      <img id="aya-score-left" class="full-layer" alt="">
+      <img id="aya-score-right" class="full-layer" alt="">
+      <img id="aya-best-of" class="full-layer" alt="">
+      <div id="aya-stage" class="aya-text"></div>
+      <div id="aya-player-left" class="aya-text player-name"></div>
+      <div id="aya-player-right" class="aya-text player-name"></div>
+      <div id="aya-prefix-left" class="aya-text prefix"></div>
+      <div id="aya-prefix-right" class="aya-text prefix"></div>
+      <div id="aya-rep-left" class="aya-text rep"></div>
+      <div id="aya-rep-right" class="aya-text rep"></div>
+    </section>
+  </main>
+</body>
+</html>

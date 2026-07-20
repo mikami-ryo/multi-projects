@@ -20,6 +20,8 @@ DEFAULT_PAYLOAD = {
     "pCountry2": "",
     "pName1": "",
     "pName2": "",
+    "pRep1": "",
+    "pRep2": "",
     "pScore1": "0",
     "pScore2": "0",
     "pTeam1": "",
@@ -31,6 +33,35 @@ DEFAULT_PAYLOAD = {
     "streamUrl": "",
     "timestamp": "0",
 }
+
+
+class ScoreLimitError(ValueError):
+    pass
+
+
+def score_limits(best_of_value: str) -> tuple[int, int]:
+    raw = str(best_of_value or "bo3").lower().removeprefix("bo")
+    try:
+        games = int(raw)
+    except ValueError:
+        games = 3
+    games = max(1, games)
+    return games // 2 + 1, games
+
+
+def validate_scores(payload: dict) -> None:
+    wins_needed, total_limit = score_limits(str(payload.get("bestOf", "bo3")))
+    try:
+        left = int(str(payload.get("pScore1", "0")))
+        right = int(str(payload.get("pScore2", "0")))
+    except ValueError as exc:
+        raise ScoreLimitError("スコアは0以上の整数で入力してください。") from exc
+    if left < 0 or right < 0:
+        raise ScoreLimitError("スコアは0以上の整数で入力してください。")
+    if left > wins_needed or right > wins_needed:
+        raise ScoreLimitError(f"この試合形式では各選手のスコアは{wins_needed}までです。")
+    if left + right > total_limit:
+        raise ScoreLimitError(f"この試合形式では合計スコアは{total_limit}までです。")
 
 
 def next_trigger_value(payload: dict) -> str:
@@ -54,11 +85,13 @@ class StreamControlStore:
                 loaded = json.load(handle)
             if isinstance(loaded, dict):
                 payload.update(loaded)
+        payload.pop("overlayNote", None)
         return payload
 
     def write(self, payload: dict, *, trigger: bool = True) -> dict:
         merged = dict(DEFAULT_PAYLOAD)
         merged.update(payload)
+        validate_scores(merged)
         if trigger:
             merged["timestamp"] = next_trigger_value(merged)
 
@@ -101,11 +134,13 @@ class StreamControlStore:
             {
                 "pTeam1": p1.prefix,
                 "pName1": p1.gamer_tag,
+                "pRep1": "",
                 "pTwitter1": p1.twitter,
                 "pCountry1": p1.country,
                 "pScore1": "0",
                 "pTeam2": p2.prefix,
                 "pName2": p2.gamer_tag,
+                "pRep2": "",
                 "pTwitter2": p2.twitter,
                 "pCountry2": p2.country,
                 "pScore2": "0",
@@ -128,4 +163,5 @@ class StreamControlStore:
         except ValueError:
             current = 0
         payload[key] = str(current + 1)
+        validate_scores(payload)
         return self.write(payload)

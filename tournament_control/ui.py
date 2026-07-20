@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -46,11 +47,23 @@ from .config import SettingsStore
 from .detector_service import DetectorService
 from .events import EventBus
 from .models import AppSettings, Match
+from .obs_layout import (
+    ObsLayoutController,
+    apply_scene_layout,
+    capture_scene_layout,
+    layout_sources,
+    obs_connection,
+)
 from .paths import AppPaths
 from .round_rules import ALL_BO3, best_of, display_round, round_side_and_rank
 from .scoreboard_server import ScoreboardServer
-from .startgg import EventMatches, StartGGClient, event_slug_from_url
-from .streamcontrol import StreamControlStore
+from .startgg import (
+    EventMatches,
+    StartGGClient,
+    event_slug_from_url,
+    phase_group_id_from_url,
+)
+from .streamcontrol import ScoreLimitError, StreamControlStore, score_limits
 from .tweet import build_match_announcement, open_x_intent
 
 
@@ -67,9 +80,46 @@ QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
 QPushButton { min-height: 30px; padding: 0 12px; }
 QPushButton#primary { background: #2563eb; color: white; border: none; border-radius: 5px; }
 QPushButton#danger { background: #dc2626; color: white; border: none; border-radius: 5px; }
-QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit { padding: 5px; }
+QLineEdit, QComboBox, QPlainTextEdit, QTextEdit { padding: 5px; }
+QSpinBox { min-width: 68px; padding: 5px 24px 5px 5px; }
+QSpinBox::up-button {
+  subcontrol-origin: border; subcontrol-position: top right;
+  width: 22px; height: 15px;
+}
+QSpinBox::down-button {
+  subcontrol-origin: border; subcontrol-position: bottom right;
+  width: 22px; height: 15px;
+}
 QTableWidget { background: white; alternate-background-color: #f7f8fa; }
 """
+
+
+ALL_ROUNDS_KEY = ("__all_rounds__", "__all_rounds__")
+
+
+def round_keys_for_matches(matches: list[Match], bracket_type: str) -> list[tuple[str, str]]:
+    if bracket_type.upper() == "ROUND_ROBIN":
+        return [ALL_ROUNDS_KEY] if matches else []
+    keys: list[tuple[str, str]] = []
+    for match in matches:
+        key = (match.phase_id or "event", match.round_text)
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def matches_for_round_key(
+    matches: list[Match],
+    bracket_type: str,
+    selected_round: tuple[str, str] | None,
+) -> list[Match]:
+    if bracket_type.upper() == "ROUND_ROBIN" and selected_round == ALL_ROUNDS_KEY:
+        return list(matches)
+    return [
+        match
+        for match in matches
+        if (match.phase_id or "event", match.round_text) == selected_round
+    ]
 
 
 class TweetDialog(QDialog):
@@ -115,7 +165,9 @@ class StartGGPage(QWidget):
         self.store = store
         self.matches: list[Match] = []
         self.visible_matches: list[Match] = []
+        self.bracket_type = ""
         self.event_slug: str | None = None
+        self.phase_group_id: str | None = None
         self._request_serial = 0
         self.signals = StartGGSignals()
         self.signals.loaded.connect(self._show_matches)
@@ -229,8 +281,17 @@ class StartGGPage(QWidget):
         raw = url.toString()
         self.url_edit.setText(raw)
         slug = event_slug_from_url(raw)
-        if slug and slug != self.event_slug:
+        phase_group_id = phase_group_id_from_url(raw)
+        if not phase_group_id and slug == self.event_slug:
+            # Score reporting can temporarily navigate away from the bracket
+            # URL. Keep filtering to the bracket the operator selected until a
+            # different bracket (or event) is opened explicitly.
+            phase_group_id = self.phase_group_id
+        if slug and (
+            slug != self.event_slug or phase_group_id != self.phase_group_id
+        ):
             self.event_slug = slug
+            self.phase_group_id = phase_group_id
             self.event_label.setText(f"イベント: {slug}（API読込待ち）")
             self.refresh_matches()
 
@@ -241,13 +302,14 @@ class StartGGPage(QWidget):
         self._request_serial += 1
         serial = self._request_serial
         slug = self.event_slug
+        phase_group_id = self.phase_group_id
         token = self.settings.startgg_token
         self.refresh_button.setEnabled(False)
         self.event_label.setText(f"{slug} を読み込み中…")
 
         def fetch():
             try:
-                result = StartGGClient(token).event_matches(slug)
+                result = StartGGClient(token).event_matches(slug, phase_group_id)
             except Exception as exc:
                 self.signals.failed.emit(serial, str(exc))
                 return
@@ -278,18 +340,22 @@ class StartGGPage(QWidget):
                 entry["rounds"].append(match.round_text)
         self.phase_rounds_loaded.emit(phase_catalog)
         self.matches = [match for match in event.matches if match.selectable]
+        self.bracket_type = event.bracket_type
         self.event_label.setText(
             f"{event.event_name} — 選択可能 {len(self.matches)}試合 / 全{len(event.matches)}試合"
         )
         current_round = self.round_selector.currentData()
         self.round_selector.blockSignals(True)
         self.round_selector.clear()
-        seen_rounds: set[tuple[str, str]] = set()
-        for match in self.matches:
-            round_key = (match.phase_id or "event", match.round_text)
-            if round_key in seen_rounds:
+        for round_key in round_keys_for_matches(self.matches, self.bracket_type):
+            if round_key == ALL_ROUNDS_KEY:
+                self.round_selector.addItem(f"{event.event_name} / 全Round", round_key)
                 continue
-            seen_rounds.add(round_key)
+            match = next(
+                item
+                for item in self.matches
+                if (item.phase_id or "event", item.round_text) == round_key
+            )
             label = display_round(match.round_text, self.settings.round_mappings)
             phase_prefix = f"{match.phase_name} / " if match.phase_name else ""
             self.round_selector.addItem(
@@ -307,11 +373,11 @@ class StartGGPage(QWidget):
 
     def _filter_matches(self) -> None:
         selected_round = self.round_selector.currentData()
-        self.visible_matches = [
-            match
-            for match in self.matches
-            if (match.phase_id or "event", match.round_text) == selected_round
-        ]
+        self.visible_matches = matches_for_round_key(
+            self.matches,
+            self.bracket_type,
+            selected_round,
+        )
         self.table.setRowCount(len(self.visible_matches))
         status_names = {1: "未開始", 2: "進行中", 3: "完了"}
         for row, match in enumerate(self.visible_matches):
@@ -360,9 +426,18 @@ class StartGGPage(QWidget):
 
 
 class StreamControlPage(QWidget):
-    def __init__(self, store: StreamControlStore, scoreboard_url: str, parent=None):
+    def __init__(
+        self,
+        store: StreamControlStore,
+        scoreboard_url: str,
+        state_store: ScoreboardStateStore | None = None,
+        on_scene_change=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.store = store
+        self.state_store = state_store
+        self.on_scene_change = on_scene_change or (lambda _scene: None)
         self.scoreboard_url = scoreboard_url
         self._loading = False
         self._dirty = False
@@ -371,10 +446,10 @@ class StreamControlPage(QWidget):
 
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        top.addWidget(QLabel("Best of"))
+        top.addWidget(QLabel("試合形式"))
         self.best_of = QComboBox()
-        for value in (1, 3, 5, 7, 9, 11, 13, 15, 17, 19):
-            self.best_of.addItem(str(value), f"bo{value}")
+        for value in (3, 5):
+            self.best_of.addItem(f"BO{value}", f"bo{value}")
         top.addWidget(self.best_of)
         top.addStretch()
         self.open_scoreboard = QPushButton("Scoreboardをブラウザで確認")
@@ -387,28 +462,31 @@ class StreamControlPage(QWidget):
         match_tab = QWidget()
         match_layout = QVBoxLayout(match_tab)
         player_grid = QGridLayout()
-        headers = ["", "Team", "Name", "Twitter", "Country", "Score"]
+        headers = ["", "Prefix・チーム", "選手名", "Rep", "Twitter", "国", "スコア"]
         for col, header in enumerate(headers):
             player_grid.addWidget(QLabel(header), 0, col)
         for side in (1, 2):
             player_grid.addWidget(QLabel(f"P{side}"), side, 0)
-            for col, stem in enumerate(("pTeam", "pName", "pTwitter", "pCountry"), start=1):
+            for col, stem in enumerate(("pTeam", "pName", "pRep", "pTwitter", "pCountry"), start=1):
                 edit = QLineEdit()
                 key = f"{stem}{side}"
                 self.fields[key] = edit
                 player_grid.addWidget(edit, side, col)
             score = QSpinBox()
-            score.setRange(0, 9)
+            score.setRange(0, 2)
+            score.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
+            score.setMinimumWidth(72)
+            score.setMinimumHeight(34)
             self.fields[f"pScore{side}"] = score
-            player_grid.addWidget(score, side, 5)
+            player_grid.addWidget(score, side, 6)
         match_layout.addLayout(player_grid)
 
         buttons = QHBoxLayout()
         for label, handler in (
-            ("Clear P1", lambda: self.clear_player(1)),
-            ("Clear P2", lambda: self.clear_player(2)),
-            ("Reset Scores", self.reset_scores),
-            ("Swap", self.swap_players),
+            ("P1を消去", lambda: self.clear_player(1)),
+            ("P2を消去", lambda: self.clear_player(2)),
+            ("スコアを0に戻す", self.reset_scores),
+            ("P1・P2を入れ替える", self.swap_players),
         ):
             button = QPushButton(label)
             button.clicked.connect(handler)
@@ -419,21 +497,33 @@ class StreamControlPage(QWidget):
         form = QFormLayout()
         self.stage = QLineEdit()
         self.stream_url = QLineEdit()
-        form.addRow("Stage", self.stage)
-        form.addRow("Stream URL", self.stream_url)
+        form.addRow("試合位置", self.stage)
+        form.addRow("配信URL", self.stream_url)
         match_layout.addLayout(form)
 
+        presentation = QGroupBox("新デザインの表示切り替え")
+        presentation_row = QHBoxLayout(presentation)
+        self.auto_scene_button = QPushButton("自動切り替え")
+        self.in_game_button = QPushButton("試合中に固定")
+        self.between_game_button = QPushButton("試合間に固定")
+        self.presentation_status = QLabel()
+        for button in (self.auto_scene_button, self.in_game_button, self.between_game_button):
+            presentation_row.addWidget(button)
+        presentation_row.addWidget(self.presentation_status)
+        presentation_row.addStretch()
+        match_layout.addWidget(presentation)
+
         action_row = QHBoxLayout()
-        self.save_button = QPushButton("StreamControlへ保存")
+        self.save_button = QPushButton("入力内容を保存")
         self.save_button.setObjectName("primary")
-        self.sponsors_button = QPushButton("Sponsors表示")
+        self.sponsors_button = QPushButton("スコアボードを更新")
         self.tweet_button = QPushButton("保存して投稿確認")
         action_row.addWidget(self.save_button)
         action_row.addWidget(self.sponsors_button)
         action_row.addWidget(self.tweet_button)
         action_row.addStretch()
         match_layout.addLayout(action_row)
-        tabs.addTab(match_tab, "Match")
+        tabs.addTab(match_tab, "試合")
 
         l3rd_tab = QWidget()
         l3rd_form = QFormLayout(l3rd_tab)
@@ -446,7 +536,7 @@ class StreamControlPage(QWidget):
             edit = QLineEdit()
             self.fields[key] = edit
             l3rd_form.addRow(label, edit)
-        tabs.addTab(l3rd_tab, "Lower Thirds")
+        tabs.addTab(l3rd_tab, "補助テキスト")
         layout.addWidget(tabs)
 
         self.status = QLabel()
@@ -458,10 +548,17 @@ class StreamControlPage(QWidget):
                 widget.textEdited.connect(self.mark_dirty)
             else:
                 widget.valueChanged.connect(self.mark_dirty)
-        self.best_of.currentIndexChanged.connect(self.mark_dirty)
+        self.best_of.currentIndexChanged.connect(self.on_best_of_changed)
+        for side in (1, 2):
+            self.fields[f"pScore{side}"].valueChanged.connect(
+                lambda _value, changed_side=side: self.on_score_changed(changed_side)
+            )
         self.save_button.clicked.connect(self.save)
         self.sponsors_button.clicked.connect(self.show_sponsors)
         self.tweet_button.clicked.connect(self.open_tweet_dialog)
+        self.auto_scene_button.clicked.connect(self.enable_auto_scene)
+        self.in_game_button.clicked.connect(lambda: self.fix_scene("in_game"))
+        self.between_game_button.clicked.connect(lambda: self.fix_scene("between_game"))
         self.open_scoreboard.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.scoreboard_url)))
         self.copy_scoreboard.clicked.connect(lambda: QApplication.clipboard().setText(self.scoreboard_url))
 
@@ -496,13 +593,60 @@ class StreamControlPage(QWidget):
                     widget.setText(str(value))
             self.stage.setText(str(payload.get("stage", "")))
             self.stream_url.setText(str(payload.get("streamUrl", "")))
+            self.update_score_ranges()
         finally:
             self._loading = False
         self._dirty = False
         self._last_mtime = self.store.path.stat().st_mtime if self.store.path.exists() else 0.0
         self.status.setText(f"Scoreboard URL: {self.scoreboard_url}")
+        self.update_presentation_status()
+
+    def update_score_ranges(self) -> None:
+        wins_needed, _ = score_limits(str(self.best_of.currentData() or "bo3"))
+        for side in (1, 2):
+            self.fields[f"pScore{side}"].setMaximum(wins_needed)
+
+    def on_best_of_changed(self, *args) -> None:
+        self.update_score_ranges()
+        self.on_score_changed(1)
+        self.mark_dirty()
+
+    def on_score_changed(self, changed_side: int) -> None:
+        if self._loading:
+            return
+        _, total_limit = score_limits(str(self.best_of.currentData() or "bo3"))
+        left = self.fields["pScore1"].value()
+        right = self.fields["pScore2"].value()
+        if left + right > total_limit:
+            widget = self.fields[f"pScore{changed_side}"]
+            other = right if changed_side == 1 else left
+            self._loading = True
+            widget.setValue(max(0, total_limit - other))
+            self._loading = False
+            self.status.setText(f"合計スコアは{total_limit}までです。")
+
+    def update_presentation_status(self) -> None:
+        if self.state_store is None:
+            self.presentation_status.setText("表示状態を利用できません")
+            return
+        state = self.state_store.read()
+        mode = "自動" if state.get("mode") == "automatic" else "固定"
+        scene = "試合間" if state.get("scene") == "between_game" else "試合中"
+        self.presentation_status.setText(f"現在: {mode} / {scene}")
+
+    def enable_auto_scene(self) -> None:
+        if self.state_store is not None:
+            self.state_store.set_presentation(mode="automatic")
+            self.update_presentation_status()
+
+    def fix_scene(self, scene: str) -> None:
+        if self.state_store is not None:
+            self.state_store.set_presentation(scene=scene, mode="manual")
+            self.update_presentation_status()
+        self.on_scene_change(scene)
 
     def poll_external_update(self) -> None:
+        self.update_presentation_status()
         if not self.store.path.exists():
             return
         mtime = self.store.path.stat().st_mtime
@@ -530,12 +674,16 @@ class StreamControlPage(QWidget):
         return payload
 
     def save(self) -> None:
-        self.store.write(self.collect())
+        try:
+            self.store.write(self.collect())
+        except ScoreLimitError as exc:
+            self.status.setText(str(exc))
+            return
         self.load()
         self.status.setText("StreamControlを更新しました。")
 
     def clear_player(self, side: int) -> None:
-        for stem in ("pTeam", "pName", "pTwitter", "pCountry"):
+        for stem in ("pTeam", "pName", "pRep", "pTwitter", "pCountry"):
             self.fields[f"{stem}{side}"].clear()
         self.fields[f"pScore{side}"].setValue(0)
         self.mark_dirty()
@@ -546,7 +694,7 @@ class StreamControlPage(QWidget):
         self.mark_dirty()
 
     def swap_players(self) -> None:
-        for stem in ("pTeam", "pName", "pTwitter", "pCountry", "pScore"):
+        for stem in ("pTeam", "pName", "pRep", "pTwitter", "pCountry", "pScore"):
             left, right = self.fields[f"{stem}1"], self.fields[f"{stem}2"]
             if isinstance(left, QSpinBox):
                 left_value, right_value = left.value(), right.value()
@@ -560,13 +708,21 @@ class StreamControlPage(QWidget):
 
     def show_sponsors(self) -> None:
         payload = self.collect()
-        self.store.write_with_sponsors(payload)
+        try:
+            self.store.write_with_sponsors(payload)
+        except ScoreLimitError as exc:
+            self.status.setText(str(exc))
+            return
         self.load()
-        self.status.setText("Sponsors表示トリガーを更新しました。")
+        self.status.setText("スコアボードを更新しました。")
 
     def open_tweet_dialog(self) -> None:
         payload = self.collect()
-        self.store.write(payload)
+        try:
+            self.store.write(payload)
+        except ScoreLimitError as exc:
+            self.status.setText(str(exc))
+            return
         self.load()
         TweetDialog(payload, self).exec()
 
@@ -574,10 +730,12 @@ class StreamControlPage(QWidget):
 class DetectorSignals(QObject):
     log = Signal(str)
     score_updated = Signal()
+    layout_captured = Signal(str, object)
 
 
 class DetectorPage(QWidget):
     score_updated = Signal()
+    obs_settings_changed = Signal(object)
 
     def __init__(
         self,
@@ -594,9 +752,23 @@ class DetectorPage(QWidget):
         self.signals = DetectorSignals()
         self.signals.log.connect(self.append_log)
         self.signals.score_updated.connect(self.score_updated.emit)
+        self.signals.layout_captured.connect(self.finish_layout_capture)
+        self.layout_profiles = {
+            "in_game": dict(settings.obs_in_game_layout),
+            "between_game": dict(settings.obs_between_game_layout),
+        }
 
-        layout = QVBoxLayout(self)
-        config_group = QGroupBox("OBS接続")
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(4, 4, 8, 8)
+        layout.setSpacing(8)
+        config_group = QGroupBox("OBS接続・映像監視")
         form = QFormLayout(config_group)
         self.host = QLineEdit(settings.obs_host)
         self.port = QSpinBox()
@@ -610,12 +782,68 @@ class DetectorPage(QWidget):
         form.addRow("Host", self.host)
         form.addRow("Port", self.port)
         form.addRow("Password", self.password)
-        form.addRow("Source", self.source)
+        form.addRow("監視対象ソース", self.source)
         form.addRow("", self.write_scores)
         layout.addWidget(config_group)
 
+        layout_group = QGroupBox("OBSレイアウト設定")
+        layout_form = QFormLayout(layout_group)
+        self.layout_enabled = QCheckBox("デザイン切り替えと同時に映像位置も切り替える")
+        self.layout_enabled.setChecked(settings.obs_layout_enabled)
+        self.layout_scene = QLineEdit(settings.obs_layout_scene_name)
+        self.layout_game_source = QLineEdit(settings.obs_game_source_name)
+        self.layout_player1_source = QLineEdit(settings.obs_player1_source_name)
+        self.layout_player2_source = QLineEdit(settings.obs_player2_source_name)
+        layout_form.addRow("", self.layout_enabled)
+        layout_form.addRow("対象シーン／グループ", self.layout_scene)
+        layout_form.addRow("ゲーム画面ソース", self.layout_game_source)
+        layout_form.addRow("P1カメラソース", self.layout_player1_source)
+        layout_form.addRow("P2カメラソース", self.layout_player2_source)
+
+        delay_group = QGroupBox("自動切り替え遅延（秒）")
+        delay_form = QFormLayout(delay_group)
+        self.in_game_framework_delay = self._delay_spinbox(
+            settings.transition_in_game_framework_delay
+        )
+        self.in_game_layout_delay = self._delay_spinbox(
+            settings.transition_in_game_layout_delay
+        )
+        self.between_game_framework_delay = self._delay_spinbox(
+            settings.transition_between_game_framework_delay
+        )
+        self.between_game_layout_delay = self._delay_spinbox(
+            settings.transition_between_game_layout_delay
+        )
+        delay_form.addRow("試合間 → 試合中：フレーム", self.in_game_framework_delay)
+        delay_form.addRow("試合間 → 試合中：OBS配置", self.in_game_layout_delay)
+        delay_form.addRow("試合中 → 試合間：フレーム", self.between_game_framework_delay)
+        delay_form.addRow("試合中 → 試合間：OBS配置", self.between_game_layout_delay)
+        layout_form.addRow(delay_group)
+
+        capture_row = QWidget()
+        capture_layout = QHBoxLayout(capture_row)
+        capture_layout.setContentsMargins(0, 0, 0, 0)
+        self.capture_in_game = QPushButton("現在の配置を試合中として保存")
+        self.capture_between = QPushButton("現在の配置を試合間として保存")
+        capture_layout.addWidget(self.capture_in_game)
+        capture_layout.addWidget(self.capture_between)
+        layout_form.addRow("配置を取得", capture_row)
+
+        test_row = QWidget()
+        test_layout = QHBoxLayout(test_row)
+        test_layout.setContentsMargins(0, 0, 0, 0)
+        self.test_in_game = QPushButton("試合中配置をテスト")
+        self.test_between = QPushButton("試合間配置をテスト")
+        test_layout.addWidget(self.test_in_game)
+        test_layout.addWidget(self.test_between)
+        layout_form.addRow("保存済み配置", test_row)
+
+        self.save_obs_settings_button = QPushButton("OBS設定を保存")
+        layout_form.addRow("", self.save_obs_settings_button)
+        layout.addWidget(layout_group)
+
         controls = QHBoxLayout()
-        self.start_button = QPushButton("Detector開始")
+        self.start_button = QPushButton("映像監視を開始")
         self.start_button.setObjectName("primary")
         self.stop_button = QPushButton("停止")
         self.stop_button.setObjectName("danger")
@@ -626,12 +854,103 @@ class DetectorPage(QWidget):
         layout.addLayout(controls)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
+        self.log.setMinimumHeight(180)
         layout.addWidget(self.log, 1)
         self.start_button.clicked.connect(self.start_detector)
         self.stop_button.clicked.connect(self.stop_detector)
+        self.capture_in_game.clicked.connect(lambda: self.capture_layout("in_game"))
+        self.capture_between.clicked.connect(lambda: self.capture_layout("between_game"))
+        self.test_in_game.clicked.connect(lambda: self.test_layout("in_game"))
+        self.test_between.clicked.connect(lambda: self.test_layout("between_game"))
+        self.save_obs_settings_button.clicked.connect(self.persist_obs_settings)
+        self.scroll_area.setWidget(content)
+        outer_layout.addWidget(self.scroll_area, 1)
+
+    @staticmethod
+    def _delay_spinbox(value: float) -> QDoubleSpinBox:
+        control = QDoubleSpinBox()
+        control.setRange(0.0, 60.0)
+        control.setDecimals(2)
+        control.setSingleStep(0.1)
+        control.setSuffix(" 秒")
+        control.setValue(max(0.0, float(value)))
+        return control
 
     def set_settings(self, settings: AppSettings) -> None:
         self.settings = settings
+
+    def obs_settings_payload(self) -> dict:
+        return {
+            "obs_host": self.host.text().strip() or "localhost",
+            "obs_port": self.port.value(),
+            "obs_password": self.password.text(),
+            "obs_source_name": self.source.text().strip(),
+            "detector_write_scores": self.write_scores.isChecked(),
+            "obs_layout_enabled": self.layout_enabled.isChecked(),
+            "obs_layout_scene_name": self.layout_scene.text().strip(),
+            "obs_game_source_name": self.layout_game_source.text().strip(),
+            "obs_player1_source_name": self.layout_player1_source.text().strip(),
+            "obs_player2_source_name": self.layout_player2_source.text().strip(),
+            "obs_in_game_layout": dict(self.layout_profiles["in_game"]),
+            "obs_between_game_layout": dict(self.layout_profiles["between_game"]),
+            "transition_in_game_framework_delay": self.in_game_framework_delay.value(),
+            "transition_in_game_layout_delay": self.in_game_layout_delay.value(),
+            "transition_between_game_framework_delay": self.between_game_framework_delay.value(),
+            "transition_between_game_layout_delay": self.between_game_layout_delay.value(),
+        }
+
+    def persist_obs_settings(self) -> None:
+        self.obs_settings_changed.emit(self.obs_settings_payload())
+        self.append_log("OBS接続・レイアウト設定を保存しました。")
+
+    def _layout_settings_snapshot(self) -> AppSettings:
+        snapshot = replace(self.settings)
+        for key, value in self.obs_settings_payload().items():
+            setattr(snapshot, key, value)
+        return snapshot
+
+    def capture_layout(self, scene: str) -> None:
+        settings = self._layout_settings_snapshot()
+        label = "試合間" if scene == "between_game" else "試合中"
+        self.append_log(f"OBSから{label}レイアウトを取得しています…")
+
+        def worker() -> None:
+            try:
+                profile = capture_scene_layout(
+                    obs_connection(settings),
+                    settings.obs_layout_scene_name,
+                    layout_sources(settings),
+                )
+                self.signals.layout_captured.emit(scene, profile)
+            except Exception as exc:
+                self.signals.log.emit(f"OBSレイアウト取得失敗: {exc}")
+
+        threading.Thread(target=worker, name=f"capture-{scene}", daemon=True).start()
+
+    def finish_layout_capture(self, scene: str, profile: dict) -> None:
+        self.layout_profiles[scene] = dict(profile)
+        label = "試合間" if scene == "between_game" else "試合中"
+        self.persist_obs_settings()
+        self.append_log(f"{label}レイアウトを保存しました（{len(profile)}ソース）。")
+
+    def test_layout(self, scene: str) -> None:
+        settings = self._layout_settings_snapshot()
+        profile = self.layout_profiles[scene]
+        label = "試合間" if scene == "between_game" else "試合中"
+
+        def worker() -> None:
+            try:
+                count = apply_scene_layout(
+                    obs_connection(settings),
+                    settings.obs_layout_scene_name,
+                    layout_sources(settings),
+                    profile,
+                )
+                self.signals.log.emit(f"OBSへ{label}レイアウトを適用しました（{count}ソース）。")
+            except Exception as exc:
+                self.signals.log.emit(f"OBSレイアウト適用失敗: {exc}")
+
+        threading.Thread(target=worker, name=f"test-{scene}", daemon=True).start()
 
     def append_log(self, line: str) -> None:
         self.log.appendPlainText(line)
@@ -736,6 +1055,14 @@ class SettingsPage(QWidget):
         self.scoreboard_port.setRange(1024, 65535)
         self.scoreboard_port.setMinimumHeight(32)
         local_form.addRow("Scoreboard HTTP Port", self.scoreboard_port)
+        self.scoreboard_design = QComboBox()
+        self.scoreboard_design.addItem("旧デザイン", "legacy")
+        self.scoreboard_design.addItem("新デザイン", "aya")
+        self.player_camera = QComboBox()
+        self.player_camera.addItem("OFF（カメラ枠なし）", False)
+        self.player_camera.addItem("ON（カメラ枠あり・自動切り替え）", True)
+        local_form.addRow("スコアボードデザイン", self.scoreboard_design)
+        local_form.addRow("選手カメラ", self.player_camera)
         obs_url_row = QWidget()
         obs_url_layout = QHBoxLayout(obs_url_row)
         obs_url_layout.setContentsMargins(0, 0, 0, 0)
@@ -767,6 +1094,12 @@ class SettingsPage(QWidget):
         self.fallback_losers = settings.losers_bo5_from
         self.stream_url.setText(settings.stream_url)
         self.scoreboard_port.setValue(settings.scoreboard_port)
+        self.scoreboard_design.setCurrentIndex(
+            max(0, self.scoreboard_design.findData(settings.scoreboard_design))
+        )
+        self.player_camera.setCurrentIndex(
+            max(0, self.player_camera.findData(settings.player_camera_enabled))
+        )
         for source, _label, default in self.ROUND_MAPPING_OPTIONS:
             target = settings.round_mappings.get(source)
             if not target and "{n}" not in source:
@@ -867,6 +1200,8 @@ class SettingsPage(QWidget):
             phase_bo5_rules=dict(self.phase_rules),
             phase_round_options=dict(self.phase_catalog),
             scoreboard_port=self.scoreboard_port.value(),
+            scoreboard_design=str(self.scoreboard_design.currentData()),
+            player_camera_enabled=bool(self.player_camera.currentData()),
             stream_url=self.stream_url.text().strip(),
         )
         self.saved.emit(settings)
@@ -881,9 +1216,19 @@ class MainWindow(QMainWindow):
         self.store = StreamControlStore(paths.streamcontrol_file)
         self.event_bus = EventBus()
         self.scoreboard_state = ScoreboardStateStore(paths.scoreboard_state_file)
+        self.scoreboard_state.configure(
+            self.settings.scoreboard_design,
+            self.settings.player_camera_enabled,
+        )
         self.automation = AutomationEngine(
             self.event_bus,
             paths.automation_rules_file,
+            self.scoreboard_state,
+            self.settings,
+        )
+        self.obs_layout = ObsLayoutController(
+            self.event_bus,
+            self.settings,
             self.scoreboard_state,
         )
         self.server = ScoreboardServer(
@@ -912,12 +1257,18 @@ class MainWindow(QMainWindow):
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
         self.navigation.setFixedWidth(170)
-        self.navigation.addItems(["start.gg 管理", "StreamControl", "Score Detector", "設定"])
+        self.navigation.addItems(["start.gg 管理", "StreamControl", "OBS映像管理", "設定"])
         self.stack = QStackedWidget()
 
         self.startgg_page = StartGGPage(self.settings, self.store)
-        self.streamcontrol_page = StreamControlPage(self.store, self.server.scoreboard_url)
+        self.streamcontrol_page = StreamControlPage(
+            self.store,
+            self.server.scoreboard_url,
+            self.scoreboard_state,
+            self.apply_manual_scene,
+        )
         self.detector_page = DetectorPage(self.settings, paths, self.event_bus)
+        self.obs_layout.set_log_callback(self.detector_page.signals.log.emit)
         self.settings_page = SettingsPage(self.settings)
         for page in (self.startgg_page, self.streamcontrol_page, self.detector_page, self.settings_page):
             self.stack.addWidget(page)
@@ -929,25 +1280,34 @@ class MainWindow(QMainWindow):
         self.startgg_page.streamcontrol_updated.connect(self.streamcontrol_page.load)
         self.startgg_page.phase_rounds_loaded.connect(self.update_phase_catalog)
         self.detector_page.score_updated.connect(self.streamcontrol_page.load)
+        self.detector_page.obs_settings_changed.connect(self.save_obs_settings)
         self.settings_page.saved.connect(self.save_settings)
         self.statusBar().showMessage(f"OBS Browser Source: {self.server.scoreboard_url}")
+
+    def apply_manual_scene(self, scene: str) -> None:
+        self.automation.cancel_pending_transition()
+        self.obs_layout.apply_async(scene)
 
     def update_phase_catalog(self, catalog: dict[str, dict]) -> None:
         self.settings.phase_round_options = dict(catalog)
         self.settings_page.update_phase_catalog(catalog)
 
     def save_settings(self, new_settings: AppSettings) -> None:
-        # Detector connection fields live on its page and are included when settings are saved.
-        new_settings.obs_host = self.detector_page.host.text().strip()
-        new_settings.obs_port = self.detector_page.port.value()
-        new_settings.obs_password = self.detector_page.password.text()
-        new_settings.obs_source_name = self.detector_page.source.text().strip()
-        new_settings.detector_write_scores = self.detector_page.write_scores.isChecked()
+        # OBS connection and layout fields live on the OBS video management page.
+        for key, value in self.detector_page.obs_settings_payload().items():
+            setattr(new_settings, key, value)
         old_port = self.settings.scoreboard_port
         self.settings = new_settings
         self.settings_store.save(new_settings)
         self.startgg_page.set_settings(new_settings)
         self.detector_page.set_settings(new_settings)
+        self.obs_layout.update_settings(new_settings)
+        self.automation.update_settings(new_settings)
+        self.scoreboard_state.configure(
+            new_settings.scoreboard_design,
+            new_settings.player_camera_enabled,
+        )
+        self.streamcontrol_page.update_presentation_status()
 
         if old_port != new_settings.scoreboard_port:
             self.server.stop()
@@ -964,8 +1324,19 @@ class MainWindow(QMainWindow):
             self.streamcontrol_page.set_scoreboard_url(self.server.scoreboard_url)
         self.statusBar().showMessage(f"設定を保存しました。OBS Browser Source: {self.server.scoreboard_url}", 8000)
 
+    def save_obs_settings(self, values: dict) -> None:
+        for key, value in values.items():
+            if hasattr(self.settings, key):
+                setattr(self.settings, key, value)
+        self.settings_store.save(self.settings)
+        self.detector_page.set_settings(self.settings)
+        self.obs_layout.update_settings(self.settings)
+        self.automation.update_settings(self.settings)
+        self.statusBar().showMessage("OBS接続・レイアウト設定を保存しました。", 6000)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self.detector_page.stop_detector()
         self.server.stop()
         self.automation.close()
+        self.obs_layout.close()
         event.accept()
