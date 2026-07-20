@@ -3,6 +3,7 @@ import unittest
 from tournament_control.models import DEFAULT_ROUND_MAPPINGS, Match, Player
 from tournament_control.round_rules import display_round
 from tournament_control.startgg import (
+    SETS_PAGE_SIZE,
     StartGGClient,
     event_slug_from_url,
     parse_event_matches,
@@ -156,13 +157,14 @@ class StartGGTests(unittest.TestCase):
 
     def test_event_matches_collects_all_pages(self):
         client = StartGGClient("token")
+        requested_pages = []
         responses = {
             1: {
                 "phase": {
                     "id": "10",
                     "name": "Finals",
                     "sets": {
-                        "pageInfo": {"totalPages": 2},
+                        "pageInfo": {"totalPages": 3},
                         "nodes": [{"id": "1", "identifier": "A1", "slots": []}],
                     },
                 }
@@ -172,8 +174,18 @@ class StartGGTests(unittest.TestCase):
                     "id": "10",
                     "name": "Finals",
                     "sets": {
-                        "pageInfo": {"totalPages": 2},
+                        "pageInfo": {"totalPages": 3},
                         "nodes": [{"id": "2", "identifier": "A2", "slots": []}],
+                    },
+                }
+            },
+            3: {
+                "phase": {
+                    "id": "10",
+                    "name": "Finals",
+                    "sets": {
+                        "pageInfo": {"totalPages": 3},
+                        "nodes": [{"id": "3", "identifier": "A3", "slots": []}],
                     },
                 }
             },
@@ -188,15 +200,55 @@ class StartGGTests(unittest.TestCase):
                         "phases": [{"id": "10", "name": "Finals"}],
                     }
                 }
+            requested_pages.append((variables["page"], variables["perPage"]))
             return responses[variables["page"]]
 
         client.execute = execute
 
         result = client.event_matches("tournament/sample/event/singles")
 
+        self.assertEqual([match.set_id for match in result.matches], ["1", "2", "3"])
+        self.assertEqual([match.phase_id for match in result.matches], ["10", "10", "10"])
+        self.assertEqual(
+            [match.phase_name for match in result.matches],
+            ["Finals", "Finals", "Finals"],
+        )
+        self.assertEqual(
+            requested_pages,
+            [(1, SETS_PAGE_SIZE), (2, SETS_PAGE_SIZE), (3, SETS_PAGE_SIZE)],
+        )
+
+    def test_event_fallback_collects_all_pages_with_safe_page_size(self):
+        client = StartGGClient("token")
+        requested_pages = []
+
+        def execute(_query, variables):
+            if "page" not in variables:
+                return {"event": {"id": "100", "name": "Singles", "phases": []}}
+            page = variables["page"]
+            requested_pages.append((page, variables["perPage"]))
+            return {
+                "event": {
+                    "id": "100",
+                    "name": "Singles",
+                    "sets": {
+                        "pageInfo": {"totalPages": 2},
+                        "nodes": [
+                            {"id": str(page), "identifier": f"A{page}", "slots": []}
+                        ],
+                    },
+                }
+            }
+
+        client.execute = execute
+
+        result = client.event_matches("tournament/sample/event/singles")
+
         self.assertEqual([match.set_id for match in result.matches], ["1", "2"])
-        self.assertEqual([match.phase_id for match in result.matches], ["10", "10"])
-        self.assertEqual([match.phase_name for match in result.matches], ["Finals", "Finals"])
+        self.assertEqual(
+            requested_pages,
+            [(1, SETS_PAGE_SIZE), (2, SETS_PAGE_SIZE)],
+        )
 
     def test_round_names_are_not_inferred_from_double_elimination_structure(self):
         nodes = []
