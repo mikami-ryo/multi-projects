@@ -11,6 +11,11 @@ from .models import Match, Player
 
 
 API_ENDPOINT = "https://api.start.gg/gql/alpha"
+# A set expands to slots, entrants, participants, and connected accounts in the
+# GraphQL response. 100 sets therefore exceeds start.gg's 1000-object request
+# limit (currently reported as 1101 objects). Keep each request comfortably
+# below the limit and use pageInfo.totalPages to collect the complete bracket.
+SETS_PAGE_SIZE = 50
 EVENT_URL_PATTERN = re.compile(r"/tournament/([^/?#]+)/event/([^/?#]+)", re.IGNORECASE)
 PHASE_GROUP_URL_PATTERN = re.compile(r"/brackets/\d+/(\d+)", re.IGNORECASE)
 
@@ -238,7 +243,11 @@ class StartGGClient:
                 while page <= total_pages:
                     phase_data = self.execute(
                         PHASE_SETS_QUERY,
-                        {"phaseId": phase_id, "page": page, "perPage": 100},
+                        {
+                            "phaseId": phase_id,
+                            "page": page,
+                            "perPage": SETS_PAGE_SIZE,
+                        },
                     )
                     phase = phase_data.get("phase") or {}
                     connection = phase.get("sets") or {}
@@ -266,7 +275,14 @@ class StartGGClient:
             )
 
         # Fallback for events whose API response does not expose phase metadata.
-        data = self.execute(EVENT_SETS_QUERY, {"eventSlug": event_slug, "page": 1, "perPage": 100})
+        data = self.execute(
+            EVENT_SETS_QUERY,
+            {
+                "eventSlug": event_slug,
+                "page": 1,
+                "perPage": SETS_PAGE_SIZE,
+            },
+        )
         event = data.get("event") or {}
         connection = event.get("sets") or {}
         page_info = connection.get("pageInfo") or {}
@@ -276,7 +292,11 @@ class StartGGClient:
         for page in range(2, total_pages + 1):
             next_data = self.execute(
                 EVENT_SETS_QUERY,
-                {"eventSlug": event_slug, "page": page, "perPage": 100},
+                {
+                    "eventSlug": event_slug,
+                    "page": page,
+                    "perPage": SETS_PAGE_SIZE,
+                },
             )
             next_event = next_data.get("event") or {}
             next_connection = next_event.get("sets") or {}
