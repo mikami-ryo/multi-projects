@@ -30,6 +30,11 @@ WRITABLE_TRANSFORM_FIELDS = {
     "scaleY",
 }
 
+SCENE_ITEM_ID_FIELD = "_sceneItemId"
+SCENE_ITEM_INDEX_FIELD = "_sceneItemIndex"
+SOURCE_NAME_FIELD = "_sourceName"
+SOURCE_OCCURRENCE_FIELD = "_sourceOccurrence"
+
 
 def obs_connection(settings: AppSettings) -> dict:
     return {
@@ -75,6 +80,88 @@ def sanitize_transform(transform: dict) -> dict:
     return sanitized
 
 
+def _item_value(item: object, *names: str):
+    for name in names:
+        if isinstance(item, dict) and name in item:
+            return item[name]
+        if hasattr(item, name):
+            return getattr(item, name)
+    return None
+
+
+def _scene_items(client: object, scene_name: str) -> list[object]:
+    """Return items for either a regular OBS scene or an OBS group."""
+    try:
+        response = client.get_scene_item_list(scene_name)
+    except Exception as scene_error:
+        get_group_items = getattr(client, "get_group_scene_item_list", None)
+        if not get_group_items:
+            raise scene_error
+        response = get_group_items(scene_name)
+    items = getattr(response, "scene_items", None)
+    if items is None and isinstance(response, dict):
+        items = response.get("sceneItems", response.get("scene_items"))
+    return list(items or [])
+
+
+def _scene_item_records(client: object, scene_name: str) -> list[dict]:
+    records = []
+    for item in _scene_items(client, scene_name):
+        item_id = _item_value(item, "sceneItemId", "scene_item_id")
+        source_name = _item_value(item, "sourceName", "source_name")
+        item_index = _item_value(item, "sceneItemIndex", "scene_item_index")
+        if item_id is None or source_name is None:
+            continue
+        records.append(
+            {
+                "sceneItemId": int(item_id),
+                "sourceName": str(source_name),
+                "sceneItemIndex": int(item_index) if item_index is not None else None,
+            }
+        )
+    return records
+
+
+def _matching_records(records: list[dict], source_name: str) -> list[dict]:
+    matches = [item for item in records if item["sourceName"] == source_name]
+    return sorted(
+        matches,
+        key=lambda item: (
+            item["sceneItemIndex"] is None,
+            item["sceneItemIndex"] if item["sceneItemIndex"] is not None else 0,
+            item["sceneItemId"],
+        ),
+    )
+
+
+def _source_occurrences(sources: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    occurrences = {}
+    for key, source_name in sources.items():
+        occurrence = counts.get(source_name, 0)
+        occurrences[key] = occurrence
+        counts[source_name] = occurrence + 1
+    return occurrences
+
+
+def _resolve_item_id(
+    records: list[dict], source_name: str, transform: dict, occurrence: int
+) -> int | None:
+    saved_id = transform.get(SCENE_ITEM_ID_FIELD)
+    if isinstance(saved_id, int):
+        for item in records:
+            if item["sceneItemId"] == saved_id and item["sourceName"] == source_name:
+                return saved_id
+
+    saved_occurrence = transform.get(SOURCE_OCCURRENCE_FIELD, occurrence)
+    if not isinstance(saved_occurrence, int) or saved_occurrence < 0:
+        saved_occurrence = occurrence
+    matches = _matching_records(records, source_name)
+    if saved_occurrence < len(matches):
+        return matches[saved_occurrence]["sceneItemId"]
+    return None
+
+
 def capture_scene_layout(
     connection: dict,
     scene_name: str,
@@ -90,10 +177,25 @@ def capture_scene_layout(
     client = client_factory(connection)
     try:
         layout = {}
+        records = _scene_item_records(client, scene_name)
+        occurrences = _source_occurrences(sources)
         for key, source_name in sources.items():
-            item_id = client.get_scene_item_id(scene_name, source_name).scene_item_id
+            occurrence = occurrences[key]
+            matches = _matching_records(records, source_name)
+            if occurrence >= len(matches):
+                raise ValueError(
+                    f"OBS上のソース「{source_name}」は{occurrence + 1}個必要ですが、"
+                    f"{len(matches)}個しかありません。"
+                )
+            item = matches[occurrence]
+            item_id = item["sceneItemId"]
             response = client.get_scene_item_transform(scene_name, item_id)
-            layout[key] = sanitize_transform(dict(response.scene_item_transform))
+            saved = sanitize_transform(dict(response.scene_item_transform))
+            saved[SCENE_ITEM_ID_FIELD] = item_id
+            saved[SCENE_ITEM_INDEX_FIELD] = item["sceneItemIndex"]
+            saved[SOURCE_NAME_FIELD] = source_name
+            saved[SOURCE_OCCURRENCE_FIELD] = occurrence
+            layout[key] = saved
         return layout
     finally:
         disconnect = getattr(client, "disconnect", None)
@@ -117,17 +219,40 @@ def apply_scene_layout(
     client = client_factory(connection)
     applied = 0
     try:
+        records = _scene_item_records(client, scene_name)
+        occurrences = _source_occurrences(sources)
+        restored_items = []
         for key, transform in layout.items():
             source_name = sources.get(key, "").strip()
             if not source_name or not isinstance(transform, dict):
                 continue
-            item_id = client.get_scene_item_id(scene_name, source_name).scene_item_id
+            item_id = _resolve_item_id(
+                records,
+                source_name,
+                transform,
+                occurrences.get(key, 0),
+            )
+            if item_id is None:
+                continue
             client.set_scene_item_transform(
                 scene_name,
                 item_id,
                 sanitize_transform(transform),
             )
             applied += 1
+            item_index = transform.get(SCENE_ITEM_INDEX_FIELD)
+            if isinstance(item_index, int) and item_index >= 0:
+                restored_items.append((item_index, item_id))
+
+        # Moving one item changes the indices of neighboring items. Restoring
+        # from the bottom upwards produces the saved ordering deterministically.
+        max_index = max(0, len(records) - 1)
+        for item_index, item_id in sorted(restored_items):
+            client.set_scene_item_index(
+                scene_name,
+                item_id,
+                min(item_index, max_index),
+            )
     finally:
         disconnect = getattr(client, "disconnect", None)
         if disconnect:

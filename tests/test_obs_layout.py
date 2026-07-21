@@ -9,6 +9,9 @@ from tournament_control.automation import ScoreboardStateStore
 from tournament_control.events import AppEvent, EventBus
 from tournament_control.models import AppSettings
 from tournament_control.obs_layout import (
+    SCENE_ITEM_ID_FIELD,
+    SCENE_ITEM_INDEX_FIELD,
+    SOURCE_OCCURRENCE_FIELD,
     ObsLayoutController,
     apply_scene_layout,
     capture_scene_layout,
@@ -19,7 +22,13 @@ from tournament_control.obs_layout import (
 class FakeObsClient:
     def __init__(self):
         self.ids = {"Game": 10, "P1": 11, "P2": 12}
+        self.scene_items = [
+            {"sourceName": "Game", "sceneItemId": 10, "sceneItemIndex": 0},
+            {"sourceName": "P1", "sceneItemId": 11, "sceneItemIndex": 1},
+            {"sourceName": "P2", "sceneItemId": 12, "sceneItemIndex": 2},
+        ]
         self.applied = []
+        self.applied_indices = []
         self.disconnected = False
 
     def get_scene_item_id(self, scene_name, source_name):
@@ -38,8 +47,15 @@ class FakeObsClient:
             }
         )
 
+    def get_scene_item_list(self, scene_name):
+        self.last_scene = scene_name
+        return SimpleNamespace(scene_items=self.scene_items)
+
     def set_scene_item_transform(self, scene_name, item_id, transform):
         self.applied.append((scene_name, item_id, transform))
+
+    def set_scene_item_index(self, scene_name, item_id, item_index):
+        self.applied_indices.append((scene_name, item_id, item_index))
 
     def disconnect(self):
         self.disconnected = True
@@ -125,6 +141,8 @@ class ObsLayoutTests(unittest.TestCase):
             client_factory=lambda _connection: capture_client,
         )
         self.assertEqual(layout["game"]["positionX"], 10.0)
+        self.assertEqual(layout["game"][SCENE_ITEM_ID_FIELD], 10)
+        self.assertEqual(layout["game"][SCENE_ITEM_INDEX_FIELD], 0)
         self.assertNotIn("sourceWidth", layout["game"])
         self.assertTrue(capture_client.disconnected)
 
@@ -138,7 +156,84 @@ class ObsLayoutTests(unittest.TestCase):
         )
         self.assertEqual(count, 3)
         self.assertEqual([item[1] for item in apply_client.applied], [10, 11, 12])
+        self.assertEqual(
+            apply_client.applied_indices,
+            [("Broadcast", 10, 0), ("Broadcast", 11, 1), ("Broadcast", 12, 2)],
+        )
         self.assertTrue(apply_client.disconnected)
+
+    def test_duplicate_source_names_are_captured_and_applied_individually(self):
+        capture_client = FakeObsClient()
+        capture_client.scene_items = [
+            {"sourceName": "Game", "sceneItemId": 10, "sceneItemIndex": 0},
+            {"sourceName": "Frame", "sceneItemId": 15, "sceneItemIndex": 1},
+            {"sourceName": "Logo", "sceneItemId": 16, "sceneItemIndex": 2},
+            {"sourceName": "Camera", "sceneItemId": 21, "sceneItemIndex": 3},
+            {"sourceName": "Score", "sceneItemId": 17, "sceneItemIndex": 4},
+            {"sourceName": "Camera", "sceneItemId": 22, "sceneItemIndex": 5},
+        ]
+        sources = {"game": "Game", "player1": "Camera", "player2": "Camera"}
+
+        layout = capture_scene_layout(
+            {},
+            "Broadcast",
+            sources,
+            client_factory=lambda _connection: capture_client,
+        )
+
+        self.assertEqual(layout["player1"][SCENE_ITEM_ID_FIELD], 21)
+        self.assertEqual(layout["player2"][SCENE_ITEM_ID_FIELD], 22)
+        self.assertEqual(layout["player1"][SOURCE_OCCURRENCE_FIELD], 0)
+        self.assertEqual(layout["player2"][SOURCE_OCCURRENCE_FIELD], 1)
+        self.assertEqual(layout["player1"]["positionX"], 21.0)
+        self.assertEqual(layout["player2"]["positionX"], 22.0)
+
+        apply_client = FakeObsClient()
+        apply_client.scene_items = list(capture_client.scene_items)
+        count = apply_scene_layout(
+            {},
+            "Broadcast",
+            sources,
+            layout,
+            client_factory=lambda _connection: apply_client,
+        )
+
+        self.assertEqual(count, 3)
+        self.assertEqual([item[1] for item in apply_client.applied], [10, 21, 22])
+        self.assertEqual(
+            apply_client.applied_indices,
+            [("Broadcast", 10, 0), ("Broadcast", 21, 3), ("Broadcast", 22, 5)],
+        )
+
+    def test_apply_falls_back_to_duplicate_occurrence_when_ids_changed(self):
+        client = FakeObsClient()
+        client.scene_items = [
+            {"sourceName": "Camera", "sceneItemId": 31, "sceneItemIndex": 0},
+            {"sourceName": "Camera", "sceneItemId": 32, "sceneItemIndex": 1},
+        ]
+        layout = {
+            "player1": {
+                "positionX": 100.0,
+                SCENE_ITEM_ID_FIELD: 21,
+                SOURCE_OCCURRENCE_FIELD: 0,
+            },
+            "player2": {
+                "positionX": 200.0,
+                SCENE_ITEM_ID_FIELD: 22,
+                SOURCE_OCCURRENCE_FIELD: 1,
+            },
+        }
+
+        count = apply_scene_layout(
+            {},
+            "Broadcast",
+            {"player1": "Camera", "player2": "Camera"},
+            layout,
+            client_factory=lambda _connection: client,
+        )
+
+        self.assertEqual(count, 2)
+        self.assertEqual([item[1] for item in client.applied], [31, 32])
 
     def test_apply_repairs_invalid_bounds_in_existing_saved_layout(self):
         client = FakeObsClient()
