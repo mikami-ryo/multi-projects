@@ -140,6 +140,26 @@ class AutomationTests(unittest.TestCase):
             self.assertEqual(state.read()["scene"], "between_game")
             engine.close()
 
+    def test_media_transition_ready_event_bypasses_framework_delay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = root / "rules.json"
+            rules.write_text('{"rules":[]}', encoding="utf-8")
+            state = ScoreboardStateStore(root / "state.json")
+            state.configure("aya", True)
+            bus = EventBus()
+            engine = AutomationEngine(
+                bus,
+                rules,
+                state,
+                AppSettings(transition_in_game_framework_delay=30.0),
+            )
+            bus.publish(
+                AppEvent("screen.vs", "auto_monitor", {"_transition_ready": True})
+            )
+            self.assertEqual(state.read()["scene"], "in_game")
+            engine.close()
+
 
 if __name__ == "__main__":
     unittest.main()

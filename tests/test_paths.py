@@ -15,6 +15,9 @@ class AppPathsTests(unittest.TestCase):
             data.mkdir()
             detector = resources / "score_board" / "AutoScoreDetector"
             detector.mkdir(parents=True)
+            media = resources / "media"
+            media.mkdir(parents=True)
+            (media / "Aya_transition.mp4").write_bytes(b"transition")
             (resources / "score_board" / "streamcontrol.json").write_text("{}", encoding="utf-8")
             (resources / "score_board" / "scoreboard.html").write_text("factory", encoding="utf-8")
             (resources / "score_board" / "scoreboard.css").write_text("css", encoding="utf-8")
@@ -37,6 +40,11 @@ class AppPathsTests(unittest.TestCase):
             self.assertFalse((paths.scoreboard_assets / "AutoScoreDetector").exists())
             self.assertTrue(paths.automation_rules_file.exists())
             self.assertTrue(paths.scoreboard_state_file.exists())
+            self.assertEqual(
+                paths.transition_video_file,
+                data / "scoreboard" / "media" / "Aya_transition.mp4",
+            )
+            self.assertEqual(paths.transition_video_file.read_bytes(), b"transition")
 
             (paths.scoreboard_assets / "scoreboard.html").write_text("custom", encoding="utf-8")
             with (

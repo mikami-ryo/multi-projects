@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -22,6 +22,7 @@ class MonitorState:
     frames_since_game_set: int = 0
     frame_index: int = 0
     vs_count: int = 0
+    vs_history: list[bool] = field(default_factory=list)
     vs_clear_count: int = 0
     vs_latched: bool = False
 
@@ -145,25 +146,35 @@ class DetectorService:
             self._emit("detector.stopped")
 
     def _process(self, state, result, monitor: dict, store) -> str | None:
-        # A bright KO effect can resemble the white VS letters. Once GAME SET
-        # has been confirmed, VS detection must stay disabled until the result
-        # flow has completed and the monitor has returned to in_match.
-        if state.phase == "in_match" and result.is_vs:
-            state.vs_count += 1
+        vs_window_frames = max(2, int(monitor.get("vs_window_frames", 3)))
+        vs_required_frames = min(
+            vs_window_frames,
+            max(2, int(monitor.get("vs_required_frames", 2))),
+        )
+        state.vs_history.append(bool(result.is_vs))
+        del state.vs_history[:-vs_window_frames]
+        state.vs_count = sum(state.vs_history)
+
+        if result.is_vs:
             state.vs_clear_count = 0
-            if (
-                state.vs_count >= int(monitor.get("consecutive_vs_frames", 2))
-                and not state.vs_latched
-            ):
-                state.vs_latched = True
-                state.game_set_count = 0
-                self._emit("screen.vs")
-                return "VS画面を検出しました。試合中表示へ切り替えます。"
         else:
-            state.vs_count = 0
             state.vs_clear_count += 1
             if state.vs_clear_count >= 2:
                 state.vs_latched = False
+
+        vs_detected = (
+            len(state.vs_history) >= vs_required_frames
+            and state.vs_count >= vs_required_frames
+            and not state.vs_latched
+        )
+        if vs_detected and state.phase in {"in_match", "awaiting_results"}:
+            was_awaiting_results = state.phase == "awaiting_results"
+            state.vs_latched = True
+            _reset(state)
+            self._emit("screen.vs")
+            if was_awaiting_results:
+                return "次のVS画面を検出したため、結果待機を終了して試合中表示へ切り替えます。"
+            return "VS画面を検出しました。試合中表示へ切り替えます。"
 
         if state.phase == "in_match":
             if result.is_game_set:

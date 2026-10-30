@@ -253,6 +253,93 @@ def compare_binary_masks(mask: np.ndarray, template_mask: np.ndarray) -> tuple[f
     return iou, correlation
 
 
+def analyze_vs_scene(
+    image: np.ndarray, config: dict
+) -> tuple[bool, dict[str, float], dict[str, tuple[int, int, int, int]]]:
+    """Require both a VS-like white shape and the red/blue battle backdrop."""
+    vs_ratio, vs_mask, vs_bounds = analyze_color_ratio(
+        image,
+        config.get("vs_text_roi", [0.45, 0.42, 0.12, 0.20]),
+        config.get("vs_text_hsv_ranges", [[[0, 0, 190], [179, 75, 255]]]),
+        int(config.get("vs_text_kernel_size", 3)),
+    )
+    vs_pixels = float(vs_mask.shape[0] * vs_mask.shape[1])
+    vs_contours, _ = cv2.findContours(vs_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # The V and S are separate shapes in a sharp OBS source screenshot.  Use
+    # both letter contours instead of requiring one contour to contain the
+    # entire word; the latter only worked when scaling/JPEG blur joined them.
+    largest_letter_areas = sorted(
+        (cv2.contourArea(contour) for contour in vs_contours), reverse=True
+    )[:2]
+    vs_blob_ratio = (
+        sum(largest_letter_areas) / vs_pixels
+        if vs_pixels
+        else 0.0
+    )
+    non_zero = cv2.findNonZero(vs_mask)
+    if non_zero is None:
+        vs_shape_density = 0.0
+    else:
+        _, _, width, height = cv2.boundingRect(non_zero)
+        bounding_pixels = float(max(1, width * height))
+        vs_shape_density = float(cv2.countNonZero(vs_mask)) / bounding_pixels
+
+    red_ranges = config.get(
+        "vs_red_hsv_ranges",
+        [[[0, 70, 45], [14, 255, 255]], [[165, 70, 45], [179, 255, 255]]],
+    )
+    blue_ranges = config.get(
+        "vs_blue_hsv_ranges", [[[88, 55, 40], [138, 255, 255]]]
+    )
+    context_kernel = int(config.get("vs_context_kernel_size", 5))
+    left_roi = config.get("vs_left_context_roi", [0.24, 0.18, 0.20, 0.64])
+    right_roi = config.get("vs_right_context_roi", [0.56, 0.18, 0.20, 0.64])
+    left_red_ratio, _, left_bounds = analyze_color_ratio(
+        image, left_roi, red_ranges, context_kernel
+    )
+    left_blue_ratio, _, _ = analyze_color_ratio(
+        image, left_roi, blue_ranges, context_kernel
+    )
+    right_red_ratio, _, right_bounds = analyze_color_ratio(
+        image, right_roi, red_ranges, context_kernel
+    )
+    right_blue_ratio, _, _ = analyze_color_ratio(
+        image, right_roi, blue_ranges, context_kernel
+    )
+
+    dominance = float(config.get("vs_context_min_dominance", 1.10))
+    context_valid = (
+        left_red_ratio >= float(config.get("vs_left_red_min_ratio", 0.06))
+        and right_blue_ratio >= float(config.get("vs_right_blue_min_ratio", 0.06))
+        and left_red_ratio >= left_blue_ratio * dominance
+        and right_blue_ratio >= right_red_ratio * dominance
+    )
+    shape_valid = (
+        vs_ratio >= float(config.get("vs_text_min_ratio", 0.45))
+        and vs_ratio <= float(config.get("vs_text_max_ratio", 0.85))
+        and vs_blob_ratio >= float(config.get("vs_text_min_blob_ratio", 0.35))
+        and vs_blob_ratio <= float(config.get("vs_text_max_blob_ratio", 0.82))
+        and vs_shape_density <= float(config.get("vs_text_max_shape_density", 0.90))
+    )
+    metrics = {
+        "vs_text_ratio": vs_ratio,
+        "vs_text_blob_ratio": vs_blob_ratio,
+        "vs_text_shape_density": vs_shape_density,
+        "vs_left_red_ratio": left_red_ratio,
+        "vs_left_blue_ratio": left_blue_ratio,
+        "vs_right_red_ratio": right_red_ratio,
+        "vs_right_blue_ratio": right_blue_ratio,
+        "vs_shape_valid": 1.0 if shape_valid else 0.0,
+        "vs_context_valid": 1.0 if context_valid else 0.0,
+    }
+    bounds = {
+        "vs_text": vs_bounds,
+        "vs_left_context": left_bounds,
+        "vs_right_context": right_bounds,
+    }
+    return shape_valid and context_valid, metrics, bounds
+
+
 def detect_scene_flags(image: np.ndarray, config: dict) -> tuple[dict[str, bool], dict[str, float], dict[str, tuple[int, int, int, int]]]:
     scene_metrics: dict[str, float] = {}
     scene_bounds: dict[str, tuple[int, int, int, int]] = {}
@@ -284,26 +371,9 @@ def detect_scene_flags(image: np.ndarray, config: dict) -> tuple[dict[str, bool]
     scene_bounds["game_set_search"] = best_game_set_search_bounds
     scene_bounds["game_set_match"] = best_game_set_match_bounds
 
-    vs_ratio, vs_mask, vs_bounds = analyze_color_ratio(
-        image,
-        config.get("vs_text_roi", [0.45, 0.42, 0.12, 0.20]),
-        config.get("vs_text_hsv_ranges", [[[0, 0, 190], [179, 75, 255]]]),
-        int(config.get("vs_text_kernel_size", 3)),
-    )
-    vs_pixels = float(vs_mask.shape[0] * vs_mask.shape[1])
-    vs_contours, _ = cv2.findContours(vs_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    vs_blob_ratio = (
-        max((cv2.contourArea(contour) for contour in vs_contours), default=0.0) / vs_pixels
-        if vs_pixels
-        else 0.0
-    )
-    vs_detected = (
-        vs_ratio >= float(config.get("vs_text_min_ratio", 0.45))
-        and vs_blob_ratio >= float(config.get("vs_text_min_blob_ratio", 0.35))
-    )
-    scene_metrics["vs_text_ratio"] = vs_ratio
-    scene_metrics["vs_text_blob_ratio"] = vs_blob_ratio
-    scene_bounds["vs_text"] = vs_bounds
+    vs_detected, vs_metrics, vs_bounds = analyze_vs_scene(image, config)
+    scene_metrics.update(vs_metrics)
+    scene_bounds.update(vs_bounds)
 
     results_kernel_size = int(config.get("scene_kernel_size", 3))
     dark_value_threshold = int(config.get("results_dark_value_threshold", 90))
@@ -444,6 +514,9 @@ def render_debug_image(image: np.ndarray, result: DetectionResult, overlay_lines
         "game_set_match": (0, 255, 255),
         "results_left_digit": (0, 255, 0),
         "results_right_digit": (255, 128, 0),
+        "vs_text": (255, 255, 255),
+        "vs_left_context": (0, 0, 255),
+        "vs_right_context": (255, 0, 0),
     }
     for key, bounds in result.scene_bounds.items():
         cv2.rectangle(debug, bounds[:2], bounds[2:], scene_box_colors.get(key, (255, 255, 255)), 2)
@@ -468,6 +541,14 @@ def render_debug_image(image: np.ndarray, result: DetectionResult, overlay_lines
             f"score={result.scene_metrics['game_set_score']:.3f} "
             f"iou={result.scene_metrics['game_set_iou']:.3f} "
             f"ratio={result.scene_metrics['game_set_mask_ratio']:.3f}"
+        ),
+        (
+            "vs="
+            f"{result.is_vs} "
+            f"text={result.scene_metrics['vs_text_ratio']:.3f} "
+            f"density={result.scene_metrics['vs_text_shape_density']:.3f} "
+            f"context=({result.scene_metrics['vs_left_red_ratio']:.3f},"
+            f"{result.scene_metrics['vs_right_blue_ratio']:.3f})"
         ),
         (
             "results="

@@ -4,17 +4,23 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from tournament_control.automation import ScoreboardStateStore
 from tournament_control.events import AppEvent, EventBus
 from tournament_control.models import AppSettings
 from tournament_control.obs_layout import (
+    CANVAS_HEIGHT_FIELD,
+    CANVAS_WIDTH_FIELD,
     SCENE_ITEM_ID_FIELD,
     SCENE_ITEM_INDEX_FIELD,
+    SOURCE_HEIGHT_FIELD,
     SOURCE_OCCURRENCE_FIELD,
+    SOURCE_WIDTH_FIELD,
     ObsLayoutController,
     apply_scene_layout,
     capture_scene_layout,
+    layout_preview_entries,
     sanitize_transform,
 )
 
@@ -88,6 +94,52 @@ class ObsLayoutTests(unittest.TestCase):
             self.assertEqual(applied, ["in_game"])
             controller.close()
 
+    def test_media_transition_ready_event_applies_immediately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ScoreboardStateStore(Path(directory) / "state.json")
+            state.configure("aya", True)
+            bus = EventBus()
+            settings = AppSettings(
+                scoreboard_design="aya",
+                player_camera_enabled=True,
+                obs_layout_enabled=True,
+                transition_in_game_layout_delay=30.0,
+            )
+            controller = ObsLayoutController(bus, settings, state)
+            applied = []
+            completed = threading.Event()
+
+            def record(scene, _settings):
+                applied.append(scene)
+                completed.set()
+                return 1
+
+            controller._apply = record
+            bus.publish(
+                AppEvent("screen.vs", "auto_monitor", {"_transition_ready": True})
+            )
+            self.assertTrue(completed.wait(0.2))
+            self.assertEqual(applied, ["in_game"])
+            controller.close()
+
+    def test_layout_restore_keeps_active_transition_source_on_top(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ScoreboardStateStore(Path(directory) / "state.json")
+            bus = EventBus()
+            settings = AppSettings(
+                obs_layout_scene_name="Broadcast",
+                obs_transition_source_name="Aya Transition",
+            )
+            controller = ObsLayoutController(bus, settings, state)
+            client = FakeObsClient()
+            client.scene_items.append(
+                {"sourceName": "Aya Transition", "sceneItemId": 42, "sceneItemIndex": 4}
+            )
+            controller._obs_client = client
+            controller._keep_transition_on_top(settings)
+            self.assertIn(("Broadcast", 42, 0), client.applied_indices)
+            controller.close()
+
     def test_new_layout_transition_cancels_older_timer(self):
         with tempfile.TemporaryDirectory() as directory:
             state = ScoreboardStateStore(Path(directory) / "state.json")
@@ -109,6 +161,58 @@ class ObsLayoutTests(unittest.TestCase):
             time.sleep(0.12)
             self.assertEqual(applied, ["between_game"])
             controller.close()
+
+    def test_many_pending_transitions_collapse_to_latest_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ScoreboardStateStore(Path(directory) / "state.json")
+            state.configure("aya", True)
+            bus = EventBus()
+            settings = AppSettings(
+                scoreboard_design="aya",
+                player_camera_enabled=True,
+                obs_layout_enabled=True,
+                transition_in_game_layout_delay=0.04,
+                transition_between_game_layout_delay=0.04,
+            )
+            controller = ObsLayoutController(bus, settings, state)
+            applied = []
+
+            def record(scene, _settings):
+                applied.append(scene)
+                return 1
+
+            controller._apply = record
+            for _index in range(50):
+                bus.publish(AppEvent("screen.vs", "auto_monitor"))
+                bus.publish(AppEvent("screen.game_set", "auto_monitor"))
+            time.sleep(0.10)
+
+            self.assertEqual(applied, ["between_game"])
+            controller.close()
+
+    def test_controller_reuses_one_obs_connection_across_layouts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ScoreboardStateStore(Path(directory) / "state.json")
+            state.configure("aya", True)
+            bus = EventBus()
+            settings = AppSettings(
+                scoreboard_design="aya",
+                player_camera_enabled=True,
+                obs_layout_enabled=True,
+                obs_layout_scene_name="Broadcast",
+                obs_game_source_name="Game",
+                obs_in_game_layout={"game": {"positionX": 10.0}},
+                obs_between_game_layout={"game": {"positionX": 20.0}},
+            )
+            client = FakeObsClient()
+            with patch("tournament_control.obs_layout._client", return_value=client) as factory:
+                controller = ObsLayoutController(bus, settings, state)
+                self.assertEqual(controller._apply("in_game", settings), 1)
+                self.assertEqual(controller._apply("between_game", settings), 1)
+                self.assertEqual(factory.call_count, 1)
+                self.assertFalse(client.disconnected)
+                controller.close()
+                self.assertTrue(client.disconnected)
 
     def test_invalid_zero_bounds_are_omitted(self):
         transform = sanitize_transform(
@@ -144,6 +248,10 @@ class ObsLayoutTests(unittest.TestCase):
         self.assertEqual(layout["game"][SCENE_ITEM_ID_FIELD], 10)
         self.assertEqual(layout["game"][SCENE_ITEM_INDEX_FIELD], 0)
         self.assertNotIn("sourceWidth", layout["game"])
+        self.assertEqual(layout["game"][SOURCE_WIDTH_FIELD], 1920.0)
+        self.assertEqual(layout["game"][SOURCE_HEIGHT_FIELD], 720.0)
+        self.assertEqual(layout["game"][CANVAS_WIDTH_FIELD], 1280.0)
+        self.assertEqual(layout["game"][CANVAS_HEIGHT_FIELD], 720.0)
         self.assertTrue(capture_client.disconnected)
 
         apply_client = FakeObsClient()
@@ -204,6 +312,43 @@ class ObsLayoutTests(unittest.TestCase):
             apply_client.applied_indices,
             [("Broadcast", 10, 0), ("Broadcast", 21, 3), ("Broadcast", 22, 5)],
         )
+
+    def test_preview_entries_normalize_size_position_and_layer_order(self):
+        layout = {
+            "game": {
+                "positionX": 0.0,
+                "positionY": 0.0,
+                "alignment": 5,
+                "scaleX": 0.5,
+                "scaleY": 0.5,
+                SOURCE_WIDTH_FIELD: 1280.0,
+                SOURCE_HEIGHT_FIELD: 720.0,
+                CANVAS_WIDTH_FIELD: 1280.0,
+                CANVAS_HEIGHT_FIELD: 720.0,
+                SCENE_ITEM_INDEX_FIELD: 0,
+            },
+            "player1": {
+                "positionX": 640.0,
+                "positionY": 360.0,
+                "alignment": 0,
+                "scaleX": 1.0,
+                "scaleY": 1.0,
+                SOURCE_WIDTH_FIELD: 640.0,
+                SOURCE_HEIGHT_FIELD: 360.0,
+                CANVAS_WIDTH_FIELD: 1280.0,
+                CANVAS_HEIGHT_FIELD: 720.0,
+                SCENE_ITEM_INDEX_FIELD: 2,
+            },
+        }
+
+        entries = layout_preview_entries(layout)
+        self.assertEqual([entry["key"] for entry in entries], ["player1", "game"])
+        game = entries[1]
+        self.assertEqual((game["x"], game["y"]), (0.0, 0.0))
+        self.assertEqual((game["width"], game["height"]), (0.5, 0.5))
+        player = entries[0]
+        self.assertEqual((player["x"], player["y"]), (0.25, 0.25))
+        self.assertEqual((player["width"], player["height"]), (0.5, 0.5))
 
     def test_apply_falls_back_to_duplicate_occurrence_when_ids_changed(self):
         client = FakeObsClient()

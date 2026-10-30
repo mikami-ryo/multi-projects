@@ -11,11 +11,9 @@ from .models import Match, Player
 
 
 API_ENDPOINT = "https://api.start.gg/gql/alpha"
-# A set expands to slots, entrants, participants, and connected accounts in the
-# GraphQL response. 100 sets therefore exceeds start.gg's 1000-object request
-# limit (currently reported as 1101 objects). Keep each request comfortably
-# below the limit and use pageInfo.totalPages to collect the complete bracket.
-SETS_PAGE_SIZE = 50
+# Account details are fetched lazily for the one selected set. Without the
+# connectedAccounts object, 100 sets remain below start.gg's 1000-object limit.
+SETS_PAGE_SIZE = 100
 EVENT_URL_PATTERN = re.compile(r"/tournament/([^/?#]+)/event/([^/?#]+)", re.IGNORECASE)
 PHASE_GROUP_URL_PATTERN = re.compile(r"/brackets/\d+/(\d+)", re.IGNORECASE)
 
@@ -52,7 +50,38 @@ query TournamentControlPhaseSets($phaseId: ID!, $page: Int!, $perPage: Int!) {
             participants {
               gamerTag
               prefix
-              connectedAccounts
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+PHASE_GROUP_SETS_QUERY = """
+query TournamentControlPhaseGroupSets($phaseGroupId: ID!, $page: Int!, $perPage: Int!) {
+  phaseGroup(id: $phaseGroupId) {
+    id
+    displayIdentifier
+    bracketType
+    phase { id name }
+    sets(page: $page, perPage: $perPage, sortType: STANDARD) {
+      pageInfo { total totalPages }
+      nodes {
+        id
+        identifier
+        state
+        fullRoundText
+        totalGames
+        slots {
+          entrant {
+            id
+            name
+            participants {
+              gamerTag
+              prefix
             }
           }
         }
@@ -84,9 +113,28 @@ query TournamentControlEventSets($eventSlug: String!, $page: Int!, $perPage: Int
             participants {
               gamerTag
               prefix
-              connectedAccounts
             }
           }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+SET_PLAYERS_QUERY = """
+query TournamentControlSetPlayers($setId: ID!) {
+  set(id: $setId) {
+    id
+    slots {
+      entrant {
+        id
+        name
+        participants {
+          gamerTag
+          prefix
+          connectedAccounts
         }
       }
     }
@@ -232,6 +280,9 @@ class StartGGClient:
         if not event_metadata:
             raise StartGGError("イベントが見つかりません。URLとAPIトークンを確認してください。")
 
+        if phase_group_id:
+            return self._phase_group_matches(event_metadata, str(phase_group_id))
+
         phases = event_metadata.get("phases") or []
         if phases:
             all_nodes: list[dict] = []
@@ -314,3 +365,61 @@ class StartGGClient:
         event["sets"] = connection
         data["event"] = event
         return parse_event_matches(data)
+
+    def _phase_group_matches(
+        self, event_metadata: dict, phase_group_id: str
+    ) -> EventMatches:
+        page = 1
+        total_pages = 1
+        all_nodes: list[dict] = []
+        phase_id = ""
+        phase_name = ""
+        bracket_type = ""
+        while page <= total_pages:
+            data = self.execute(
+                PHASE_GROUP_SETS_QUERY,
+                {
+                    "phaseGroupId": phase_group_id,
+                    "page": page,
+                    "perPage": SETS_PAGE_SIZE,
+                },
+            )
+            group = data.get("phaseGroup") or {}
+            if not group:
+                raise StartGGError("選択したPoolの試合情報が見つかりません。")
+            phase = group.get("phase") or {}
+            phase_id = str(phase.get("id") or phase_id)
+            phase_name = str(phase.get("name") or phase_name)
+            bracket_type = str(group.get("bracketType") or bracket_type)
+            connection = group.get("sets") or {}
+            page_info = connection.get("pageInfo") or {}
+            total_pages = int(page_info.get("totalPages") or 1)
+            for original in connection.get("nodes") or []:
+                node = dict(original)
+                node["_phaseId"] = phase_id
+                node["_phaseName"] = phase_name
+                node["phaseGroup"] = {
+                    "id": str(group.get("id") or phase_group_id),
+                    "bracketType": bracket_type,
+                }
+                all_nodes.append(node)
+            page += 1
+        return parse_event_matches(
+            {
+                "event": {
+                    "id": event_metadata.get("id"),
+                    "name": event_metadata.get("name"),
+                    "sets": {"nodes": all_nodes},
+                }
+            }
+        )
+
+    def set_players(self, set_id: str) -> list[Player]:
+        data = self.execute(SET_PLAYERS_QUERY, {"setId": str(set_id)})
+        selected_set = data.get("set") or {}
+        if not selected_set:
+            raise StartGGError("選択した試合の選手情報が見つかりません。")
+        return [
+            _player_from_entrant(slot.get("entrant"))
+            for slot in selected_set.get("slots") or []
+        ]

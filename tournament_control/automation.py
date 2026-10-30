@@ -168,7 +168,9 @@ class AutomationEngine:
             presentation_changed = False
             if state.get("design") == "aya" and state.get("playerCamera"):
                 if event.name == "screen.vs":
-                    delay = max(0.0, float(self.settings.transition_in_game_framework_delay))
+                    delay = 0.0 if event.payload.get("_transition_ready") else max(
+                        0.0, float(self.settings.transition_in_game_framework_delay)
+                    )
                     if delay > 0:
                         delayed_presentation = ("in_game", delay)
                     else:
@@ -176,7 +178,7 @@ class AutomationEngine:
                         state["scene"] = "in_game"
                         presentation_changed = True
                 elif event.name == "screen.game_set":
-                    delay = max(
+                    delay = 0.0 if event.payload.get("_transition_ready") else max(
                         0.0, float(self.settings.transition_between_game_framework_delay)
                     )
                     if delay > 0:

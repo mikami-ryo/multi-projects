@@ -35,6 +35,12 @@ class SettingsTests(unittest.TestCase):
                 transition_in_game_layout_delay=1.5,
                 transition_between_game_framework_delay=2.25,
                 transition_between_game_layout_delay=2.5,
+                obs_transition_enabled=True,
+                obs_transition_vs_enabled=False,
+                obs_transition_game_set_enabled=True,
+                obs_transition_source_name="Transition",
+                obs_transition_switch_delay=0.75,
+                obs_transition_duration=1.6,
             )
             store.save(settings)
             loaded = store.load()
@@ -46,6 +52,11 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(loaded.transition_in_game_layout_delay, 1.5)
             self.assertEqual(loaded.transition_between_game_framework_delay, 2.25)
             self.assertEqual(loaded.transition_between_game_layout_delay, 2.5)
+            self.assertTrue(loaded.obs_transition_enabled)
+            self.assertFalse(loaded.obs_transition_vs_enabled)
+            self.assertEqual(loaded.obs_transition_source_name, "Transition")
+            self.assertEqual(loaded.obs_transition_switch_delay, 0.75)
+            self.assertEqual(loaded.obs_transition_duration, 1.6)
 
 
 if __name__ == "__main__":

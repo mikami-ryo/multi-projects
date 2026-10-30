@@ -3,6 +3,8 @@
 
   const themeRoot = "themes/aya-new/";
   const elements = {};
+  let updateInFlight = false;
+  let lastRenderedState = "";
 
   function byId(id) {
     return document.getElementById(id);
@@ -88,6 +90,8 @@
   }
 
   async function update() {
+    if (updateInFlight) return;
+    updateInFlight = true;
     try {
       const nonce = Date.now();
       const [payloadResponse, stateResponse] = await Promise.all([
@@ -95,9 +99,17 @@
         fetch(`/scoreboard-state.json?t=${nonce}`, { cache: "no-store" }),
       ]);
       if (!payloadResponse.ok || !stateResponse.ok) return;
-      render(await payloadResponse.json(), await stateResponse.json());
+      const payload = await payloadResponse.json();
+      const state = await stateResponse.json();
+      const renderedState = JSON.stringify([payload, state]);
+      if (renderedState !== lastRenderedState) {
+        render(payload, state);
+        lastRenderedState = renderedState;
+      }
     } catch (_error) {
       // OBS may briefly reload the local server; the next poll will recover.
+    } finally {
+      updateInFlight = false;
     }
   }
 

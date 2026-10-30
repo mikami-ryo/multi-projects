@@ -28,6 +28,22 @@
   "vs_text_kernel_size": 3,
   "vs_text_min_ratio": 0.48,
   "vs_text_min_blob_ratio": 0.47,
+  "vs_text_max_ratio": 0.85,
+  "vs_text_max_blob_ratio": 0.82,
+  "vs_text_max_shape_density": 0.90,
+  "vs_left_context_roi": [0.24, 0.18, 0.20, 0.64],
+  "vs_right_context_roi": [0.56, 0.18, 0.20, 0.64],
+  "vs_red_hsv_ranges": [
+    [[0, 70, 45], [14, 255, 255]],
+    [[165, 70, 45], [179, 255, 255]]
+  ],
+  "vs_blue_hsv_ranges": [
+    [[88, 55, 40], [138, 255, 255]]
+  ],
+  "vs_context_kernel_size": 5,
+  "vs_left_red_min_ratio": 0.06,
+  "vs_right_blue_min_ratio": 0.06,
+  "vs_context_min_dominance": 1.10,
   "results_left_digit_roi": [0.34, 0.01, 0.10, 0.16],
   "results_right_digit_roi": [0.69, 0.01, 0.10, 0.16],
   "results_white_hsv_ranges": [

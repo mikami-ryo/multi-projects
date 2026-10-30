@@ -2,14 +2,25 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSpinBox
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QStyle,
+    QStyleOptionSpinBox,
+    QWidget,
+)
 from PySide6.QtCore import Qt
 
 from tournament_control.models import AppSettings, Match, Player
+from tournament_control.operations import LayoutApplyResult
 from tournament_control.round_rules import ALL_BO3
 from tournament_control.ui import (
     APP_STYLE,
@@ -22,12 +33,37 @@ from tournament_control.ui import (
     round_keys_for_matches,
 )
 from tournament_control.streamcontrol import StreamControlStore
+from tournament_control.ui_components import ScrollSafeDoubleSpinBox, ScrollSafeSpinBox
 
 
 class TweetDialogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_light_ui_text_remains_visible_with_dark_system_palette(self):
+        original_palette = self.app.palette()
+        dark_palette = QPalette(original_palette)
+        dark_palette.setColor(QPalette.ColorRole.WindowText, QColor("#ffffff"))
+        dark_palette.setColor(QPalette.ColorRole.Text, QColor("#ffffff"))
+        dark_palette.setColor(QPalette.ColorRole.Window, QColor("#202020"))
+        dark_palette.setColor(QPalette.ColorRole.Base, QColor("#202020"))
+        self.app.setPalette(dark_palette)
+
+        parent = QWidget()
+        try:
+            parent.setStyleSheet(APP_STYLE)
+            label = QLabel("start.gg 管理", parent)
+            field = QLineEdit("start.gg slug", parent)
+            parent.show()
+            self.app.processEvents()
+
+            self.assertEqual(label.palette().color(QPalette.ColorRole.WindowText), QColor("#172033"))
+            self.assertEqual(field.palette().color(QPalette.ColorRole.Text), QColor("#0f172a"))
+            self.assertEqual(field.palette().color(QPalette.ColorRole.Base), QColor("#ffffff"))
+        finally:
+            parent.close()
+            self.app.setPalette(original_palette)
 
     def test_preview_preserves_line_breaks(self):
         dialog = TweetDialog(
@@ -91,6 +127,97 @@ class TweetDialogTests(unittest.TestCase):
             self.assertEqual(payload["transition_in_game_layout_delay"], 1.5)
             self.assertEqual(payload["transition_between_game_framework_delay"], 2.25)
             self.assertEqual(payload["transition_between_game_layout_delay"], 2.5)
+            self.assertFalse(payload["obs_transition_enabled"])
+            self.assertTrue(payload["obs_transition_vs_enabled"])
+            self.assertTrue(payload["obs_transition_game_set_enabled"])
+            self.assertEqual(payload["obs_transition_switch_delay"], 0.8)
+            self.assertEqual(
+                page.transition_url.text(),
+                "http://127.0.0.1:8765/transition.html",
+            )
+            self.assertIsInstance(page.port, ScrollSafeSpinBox)
+            self.assertIsInstance(page.in_game_framework_delay, ScrollSafeDoubleSpinBox)
+
+            class WheelEvent:
+                ignored = False
+
+                def ignore(self):
+                    self.ignored = True
+
+            wheel = WheelEvent()
+            original_delay = page.in_game_framework_delay.value()
+            page.in_game_framework_delay.wheelEvent(wheel)
+            self.assertTrue(wheel.ignored)
+            self.assertEqual(page.in_game_framework_delay.value(), original_delay)
+
+            requested = []
+            page.transition_test_requested.connect(requested.append)
+            page.test_transition_video()
+            self.assertEqual(len(requested), 1)
+            self.assertEqual(
+                requested[0].obs_transition_source_name,
+                "Aya Transition",
+            )
+            page.close_operations()
+
+    def test_obs_layout_cards_preview_confirm_overwrite_and_test_scoreboard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = type("Paths", (), {"detector_dir": Path(directory)})()
+            profile = {
+                "game": {
+                    "positionX": 0.0,
+                    "positionY": 0.0,
+                    "alignment": 5,
+                    "boundsType": "OBS_BOUNDS_STRETCH",
+                    "boundsWidth": 1280.0,
+                    "boundsHeight": 720.0,
+                    "_sourceName": "Game",
+                    "_sceneItemIndex": 0,
+                }
+            }
+            page = DetectorPage(
+                AppSettings(
+                    obs_layout_scene_name="Broadcast",
+                    obs_game_source_name="Game",
+                    obs_in_game_layout=profile,
+                ),
+                paths,
+            )
+
+            self.assertEqual(page.layout_previews["in_game"].profile, profile)
+            self.assertIn("1ソース", page.layout_status_labels["in_game"].text())
+            self.assertTrue(page.test_in_game.isEnabled())
+            self.assertFalse(page.test_between.isEnabled())
+
+            with patch.object(
+                QMessageBox,
+                "warning",
+                return_value=QMessageBox.StandardButton.Cancel,
+            ) as warning:
+                page.capture_layout("in_game")
+            warning.assert_called_once()
+            self.assertTrue(page.capture_in_game.isEnabled())
+
+            requested = []
+            page.presentation_test_requested.connect(requested.append)
+            with patch.object(
+                page.operations,
+                "apply",
+                return_value=LayoutApplyResult("in_game", 1),
+            ):
+                page.test_layout("in_game")
+                QTest.qWait(30)
+            self.assertEqual(requested, ["in_game"])
+            self.assertIn("Scoreboardを試合中表示へ切り替えました。", page.log.toPlainText())
+
+            new_profile = {**profile, "player1": {"positionX": 50.0}}
+            saved = []
+            page.obs_settings_changed.connect(saved.append)
+            page.finish_layout_capture("between_game", new_profile)
+            self.assertEqual(page.layout_previews["between_game"].profile, new_profile)
+            self.assertTrue(page.test_between.isEnabled())
+            self.assertEqual(saved[-1]["obs_between_game_layout"], new_profile)
+            page.close_operations()
 
     def test_phase_bo5_choices_only_use_discovered_rounds(self):
         page = SettingsPage(AppSettings())

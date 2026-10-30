@@ -28,6 +28,9 @@ MANAGED_SCOREBOARD_FILES = (
     "tournament-scoreboard.html",
     "tournament-scoreboard.css",
     "tournament-scoreboard.js",
+    "transition.html",
+    "transition.css",
+    "transition.js",
 )
 
 
@@ -55,6 +58,7 @@ class AppPaths:
     detector_runtime_config: Path
     automation_rules_file: Path
     scoreboard_state_file: Path
+    transition_video_file: Path
 
     @classmethod
     def create(cls) -> "AppPaths":
@@ -104,6 +108,12 @@ class AppPaths:
                 encoding="utf-8",
             )
 
+        source_transition_video = resources / "media" / "Aya_transition.mp4"
+        transition_video_file = scoreboard_workspace / "media" / "Aya_transition.mp4"
+        if not transition_video_file.exists() and source_transition_video.exists():
+            transition_video_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_transition_video, transition_video_file)
+
         return cls(
             data_dir=data,
             resource_dir=resources,
@@ -114,4 +124,5 @@ class AppPaths:
             detector_runtime_config=detector_runtime_config,
             automation_rules_file=automation_rules_file,
             scoreboard_state_file=scoreboard_state_file,
+            transition_video_file=transition_video_file,
         )

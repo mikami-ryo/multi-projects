@@ -13,7 +13,8 @@
   "monitor": {
     "poll_interval_ms": 250,
     "consecutive_game_set_frames": 2,
-    "consecutive_vs_frames": 2,
+    "vs_window_frames": 3,
+    "vs_required_frames": 2,
     "consecutive_results_frames": 2,
     "consecutive_winner_frames": 2,
     "results_timeout_frames": 240,

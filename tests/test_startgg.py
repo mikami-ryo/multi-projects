@@ -19,32 +19,7 @@ class StartGGTests(unittest.TestCase):
 
     def test_event_matches_excludes_preview_phase_groups_from_bracket_url(self):
         client = StartGGClient("token")
-        nodes = [
-            {
-                "id": "105498556",
-                "identifier": "B",
-                "state": 1,
-                "fullRoundText": "Winners Quarter-Final",
-                "phaseGroup": {"id": "3391306"},
-                "slots": [],
-            },
-            {
-                "id": "105498558",
-                "identifier": "D",
-                "state": 1,
-                "fullRoundText": "Winners Semi-Final",
-                "phaseGroup": {"id": "3391306"},
-                "slots": [],
-            },
-            {
-                "id": "preview_3391307_1_1",
-                "identifier": "A",
-                "state": 1,
-                "fullRoundText": "Winners Round 1",
-                "phaseGroup": {"id": "3391307"},
-                "slots": [],
-            },
-        ]
+        requested_variables = []
 
         def execute(_query, variables):
             if "eventSlug" in variables:
@@ -55,13 +30,30 @@ class StartGGTests(unittest.TestCase):
                         "phases": [{"id": "2347473", "name": "予選"}],
                     }
                 }
+            requested_variables.append(variables)
             return {
-                "phase": {
-                    "id": "2347473",
-                    "name": "予選",
+                "phaseGroup": {
+                    "id": "3391306",
+                    "bracketType": "DOUBLE_ELIMINATION",
+                    "phase": {"id": "2347473", "name": "予選"},
                     "sets": {
                         "pageInfo": {"totalPages": 1},
-                        "nodes": nodes,
+                        "nodes": [
+                            {
+                                "id": "105498556",
+                                "identifier": "B",
+                                "state": 1,
+                                "fullRoundText": "Winners Quarter-Final",
+                                "slots": [],
+                            },
+                            {
+                                "id": "105498558",
+                                "identifier": "D",
+                                "state": 1,
+                                "fullRoundText": "Winners Semi-Final",
+                                "slots": [],
+                            },
+                        ],
                     },
                 }
             }
@@ -80,6 +72,54 @@ class StartGGTests(unittest.TestCase):
                 ("105498558", "Winners Semi-Final"),
             ],
         )
+        self.assertEqual(
+            requested_variables,
+            [{"phaseGroupId": "3391306", "page": 1, "perPage": SETS_PAGE_SIZE}],
+        )
+        self.assertEqual(result.matches[0].phase_id, "2347473")
+
+    def test_selected_set_players_are_loaded_with_accounts_only_on_demand(self):
+        client = StartGGClient("token")
+        requested = []
+
+        def execute(_query, variables):
+            requested.append(variables)
+            return {
+                "set": {
+                    "id": "99",
+                    "slots": [
+                        {
+                            "entrant": {
+                                "id": "1",
+                                "name": "TeamA | PlayerOne",
+                                "participants": [
+                                    {
+                                        "gamerTag": "PlayerOne",
+                                        "prefix": "TeamA",
+                                        "connectedAccounts": {
+                                            "twitter": "player_one"
+                                        },
+                                    }
+                                ],
+                            }
+                        },
+                        {
+                            "entrant": {
+                                "id": "2",
+                                "name": "PlayerTwo",
+                                "participants": [{"gamerTag": "PlayerTwo"}],
+                            }
+                        },
+                    ],
+                }
+            }
+
+        client.execute = execute
+        players = client.set_players("99")
+
+        self.assertEqual(requested, [{"setId": "99"}])
+        self.assertEqual(players[0].prefix, "TeamA")
+        self.assertEqual(players[0].twitter, "player_one")
 
     def test_parse_players_keeps_prefix_separate(self):
         payload = {

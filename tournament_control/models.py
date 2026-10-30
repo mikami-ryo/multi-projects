@@ -82,3 +82,9 @@ class AppSettings:
     transition_in_game_layout_delay: float = 0.0
     transition_between_game_framework_delay: float = 0.0
     transition_between_game_layout_delay: float = 0.0
+    obs_transition_enabled: bool = False
+    obs_transition_vs_enabled: bool = True
+    obs_transition_game_set_enabled: bool = True
+    obs_transition_source_name: str = "Aya Transition"
+    obs_transition_switch_delay: float = 0.8
+    obs_transition_duration: float = 1.6
